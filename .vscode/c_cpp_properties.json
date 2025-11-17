@@ -1,0 +1,35 @@
+{
+    "configurations": [
+        {
+            "name": "Win64",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "C:/Program Files/Java/jdk-22/include",
+                "C:/Program Files/Java/jdk-22/include/win32",
+                "C:/VCPKG/vcpkg/**",
+                "C:/msys64/mingw64/**",
+                "C:/openssl/**",
+                "C:/openssl/include",
+                "C:/Users/casta/OneDrive/Desktop/vscode/messages/main/vcpkg/installed/x64-windows/mingw64/**",
+                "C:/Users/casta/OneDrive/Desktop/vscode/messages/main/vcpkg/installed/x64-windows/mingw64/bin/**",
+                "C:/Users/casta/OneDrive/Desktop/vscode/messages/main/vcpkg/installed/x64-windows/include/openssl/**",
+                "C:/Users/casta/cmake-3.28.0-rc3/Tests/RunCMake/PrecompileHeaders",
+                "C:/Users/casta/cmake-3.28.0-rc3/Tests/RunCMake/PrecompileHeaders/**"
+            ],
+            "defines": [
+                "_DEBUG",
+                "UNICODE",
+                "_UNICODE"
+            ],
+            "windowsSdkVersion": "10.0.26100.0",
+            "compilerPath": "C:/Users/casta/OneDrive/Desktop/vscode/messages/main/vcpkg/installed/x64-windows/mingw64/bin/g++.exe",
+            "cStandard": "c17",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "windows-gcc-x64",
+            "compilerArgs": [
+                "-Wno-nonexistent-include-directory"
+            ]
+        }
+    ],
+    "version": 4
+}
