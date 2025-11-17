@@ -15,7 +15,7 @@ void Window::createWindow() {
 
     hwnd = CreateWindow(
         L"nameforclass",
-        L"Hello World",
+        L"Hello World!",
         WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT,
         CW_USEDEFAULT,
