@@ -10,7 +10,8 @@ CaptureController::CaptureController() :
     hwndVideo(nullptr),
     isRunning(false)
 {
-    MFStartup(MF_VERSION);
+    HRESULT hr = MFStartup(MF_VERSION);
+    if(FAILED(hr)) std::wcout << L"MFStartup failed: " << hr << std::endl;
 }
 CaptureController::~CaptureController() {
     cleanup();
@@ -30,7 +31,7 @@ bool CaptureController::init(
 
     if(!refreshDevices()) return false;
     if(deviceController.getDeviceCount() > 0) {
-        auto* fDevice = deviceController.getDevice(0);
+        auto* fDevice = deviceController.getDevice(1);
         if(fDevice) {
             return initWithDevice(
                 parent,
@@ -89,18 +90,27 @@ bool CaptureController::createVideoWindow() {
 ** Setup Device
 */
 bool CaptureController::setupDevice(const std::wstring& deviceId) {
+    std::wcout << L"Setting up device: " << deviceId << std::endl;
     IDevice* device = deviceController.findDevice(deviceId);
-    if(!device) return false;
+    if(!device) {
+        std::wcout << L"Device not found in controller" << std::endl;
+        return false;
+    }
+    std::wcout << L"Found device: " << device->getName() << std::endl;
 
     IMFAttributes* pAttrs = nullptr;
     HRESULT hr = MFCreateAttributes(&pAttrs, 1);
-    if(FAILED(hr)) return false;
+    if(FAILED(hr)) {
+        std::wcout << L"Failed to create attributes: " << hr << std::endl;
+        return false;
+    }
 
     hr = pAttrs->SetGUID(
         MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE,
         MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID
     );
     if(FAILED(hr)) {
+        std::wcout << L"Failed to set source type GUID: " << hr << std::endl;
         pAttrs->Release();
         return false;
     }
@@ -110,28 +120,42 @@ bool CaptureController::setupDevice(const std::wstring& deviceId) {
         deviceId.c_str()
     );
     if(FAILED(hr)) {
+        std::wcout << L"Failed to set symbolic link: " << hr << std::endl;
         pAttrs->Release();
         return false;
     }
 
+    std::wcout << L"Creating device source..." << std::endl;
     hr = MFCreateDeviceSource(pAttrs, &pVideoSource);
     pAttrs->Release();
-    if(FAILED(hr)) return false;
+    if(FAILED(hr)) {
+        std::wcout << L"MFCreateDeviceSource failed: " << hr << std::endl;
+        return false;
+    }
 
+    std::wcout << L"MFCreateDeviceSource failed: " << hr << std::endl;
     return createSourceReader();
 }
 
 bool CaptureController::createSourceReader() {
+    std::wcout << L"Creating source reader..." << std::endl;
     IMFAttributes* pAttrs = nullptr;
     HRESULT hr = MFCreateAttributes(&pAttrs, 1);
-    if(FAILED(hr)) return false;
+    if(FAILED(hr)) {
+        std::wcout << L"Failed to create reader attributes: " << hr << std::endl;
+        return false;
+    }
 
     hr = pAttrs->SetUnknown(MF_SOURCE_READER_ASYNC_CALLBACK, nullptr);
     hr = pAttrs->SetUINT32(MF_SOURCE_READER_DISCONNECT_MEDIASOURCE_ON_SHUTDOWN, TRUE);
     hr = MFCreateSourceReaderFromMediaSource(pVideoSource, pAttrs, &pReader);
     pAttrs->Release();
-    if(FAILED(hr)) return false;
+    if(FAILED(hr)) {
+        std::wcout << L"MFCreateSourceReaderFromMediaSource failed: " << hr << std::endl;
+        return false;
+    }
 
+    std::wcout << L"MFCreateSourceReaderFromMediaSource failed: " << hr << std::endl;
     hr = pReader->SetStreamSelection(MF_SOURCE_READER_ALL_STREAMS, FALSE);
     hr = pReader->SetStreamSelection(MF_SOURCE_READER_FIRST_VIDEO_STREAM, TRUE);
 
@@ -151,10 +175,17 @@ bool CaptureController::createSourceReader() {
             nullptr,
             pMediaType
         );
+        pMediaType->Release();
+        if(FAILED(hr)) {
+            std::wcout << L"Failed to set media type: " << hr << std::endl;
+        } else {
+            std::wcout << L"Failed to set media type: " << hr << std::endl;
+        }
     }
 
     isRunning = true;
-    return SUCCEEDED(hr);
+    std::wcout << L"Source reader setup completed successfully" << std::endl;
+    return true;
 } 
 
 HRESULT CaptureController::updateVideoWindow() {
@@ -166,7 +197,7 @@ HRESULT CaptureController::updateVideoWindow() {
     LONGLONG timestamp;
 
     HRESULT hr = pReader->ReadSample(
-        MF_SOURCE_READER_FIRST_AUDIO_STREAM,
+        MF_SOURCE_READER_FIRST_VIDEO_STREAM,
         0,
         &streamIndex,
         &flags,
@@ -207,6 +238,10 @@ void CaptureController::resize(int x, int y, int w, int h) {
 
 IDevice* CaptureController::getCurrentDevice() const {
     return deviceController.findDevice(currentDeviceId);
+}
+
+bool CaptureController::refreshDevices() {
+    return deviceController.setDevices();
 }
 
 void CaptureController::cleanup() {

@@ -79,8 +79,8 @@ LRESULT CALLBACK Window::WindowProc(
             wParam,
             lParam
         );
-        return 0;
     }
+    return 0;
 }
 
 /*
