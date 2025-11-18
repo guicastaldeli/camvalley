@@ -1,94 +1,76 @@
-#pragma comment(lib, "strmiids.lib")
-#pragma comment(lib, "ole32.lib")
 #include <iostream>
 #include "device_list.h"
 
 DeviceList::DeviceList() {
-    CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+    MFStartup(MF_VERSION);
 }
 DeviceList::~DeviceList() {
     cleanup();
-    CoUninitialize();
+    MFShutdown();
 }
 
 /*
-** Set Camera
+** Camera
 */
 bool DeviceList::setCamera() {
     cleanup();
 
-    ICreateDevEnum* pDevEnum = nullptr;
-    IEnumMoniker* pEnum = nullptr;
+    IMFAttributes* pAttrs = nullptr;
+    IMFActivate** ppDevices = nullptr;
+    UINT32 count = 0;
 
-    HRESULT hr = CoCreateInstance(
-        CLSID_SystemDeviceEnum,
-        nullptr,
-        CLSCTX_INPROC_SERVER,
-        IID_ICreateDevEnum,
-        (void**)&pDevEnum
+    HRESULT hr = MFCreateAttributes(&pAttrs, 1);
+    if(FAILED(hr)) return false;
+
+    hr = pAttrs->SetGUID(
+        MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE,
+        MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID
     );
-    hr = pDevEnum->CreateClassEnumerator(
-        CLSID_VideoInputDeviceCategory,
-        &pEnum,
-        0
-    );
-    if(hr != S_OK || !pEnum) {
-        pDevEnum->Release();
-        return false;
-    }
     if(FAILED(hr)) {
+        pAttrs->Release();
         return false;
     }
 
-    IMoniker* pMoniker = nullptr;
-    int cameraCount = 0;
-    while(pEnum->Next(1, &pMoniker, nullptr) == S_OK) {
-        IPropertyBag* pPropBag = nullptr;
-        hr = pMoniker->BindToStorage(
-            0, 
-            0, 
-            IID_IPropertyBag, 
-            (void**)&pPropBag
+    hr = MFEnumDeviceSources(pAttrs, &ppDevices, &count);
+    pAttrs->Release();
+    if(FAILED(hr) || count == 0) return false;
+
+    for(UINT32 i = 0; i < count; i++) {
+        WCHAR* friendlyName = nullptr;
+        UINT32 nameLength = 0;
+        WCHAR* symbolicLink = nullptr;
+        UINT32 linkLength = 0;
+
+        hr = ppDevices[i]->GetAllocatedString(
+            MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME,
+            &friendlyName,
+            &nameLength
         );
+        hr = ppDevices[i]->GetAllocatedString(
+            MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK,
+            &symbolicLink,
+            &linkLength
+        );
+        if(SUCCEEDED(hr) && friendlyName) {
+            std::wstring deviceId = L"camera_" + std::to_wstring(i);
+            if(symbolicLink) deviceId = symbolicLink;
 
-        if(SUCCEEDED(hr)) {
-            VARIANT name;
-            VARIANT path;
-            VariantInit(&name);
-            VariantInit(&path);
-
-            hr = pPropBag->Read(L"FriendlyName", &name, 0);
-            if(SUCCEEDED(hr) && name.vt == VT_BSTR) {
-                std::wstring friendlyName = name.bstrVal;
-                std::wstring devicePath = L"";
-                std::wstring deviceId = L"camera_" + std::to_wstring(cameraCount++);
-
-                hr = pPropBag->Read(L"DevicePath", &path, 0);
-                if(SUCCEEDED(hr) && path.vt == VT_BSTR) {
-                    devicePath = path.bstrVal;
-                    deviceId = L"camera_path_" + std::to_wstring(cameraCount); 
-                }
-
-                devices.push_back(
-                    std::make_unique<Camera>(
-                        friendlyName,
-                        devicePath,
-                        deviceId,
-                        pMoniker
-                    )
-                );
-            }
-
-            VariantClear(&name);
-            VariantClear(&path);
-            pPropBag->Release();
+            devices.push_back(
+                std::make_unique<Camera>(
+                    std::wstring(friendlyName),
+                    symbolicLink ? std::wstring(symbolicLink) : L"",
+                    deviceId,
+                    ppDevices[i]
+                )
+            );
+            ppDevices[i]->AddRef();
         }
 
-        pMoniker->Release();
+        if(friendlyName) CoTaskMemFree(friendlyName);
+        if(symbolicLink) CoTaskMemFree(symbolicLink);
     }
 
-    pEnum->Release();
-    pDevEnum->Release();
+    CoTaskMemFree(ppDevices);
     return !devices.empty();
 }
 

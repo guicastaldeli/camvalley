@@ -1,6 +1,7 @@
 #pragma once
-#include <windows.h>
-#include <dshow.h>
+#include <Windows.h>
+#include <mfapi.h>
+#include <mfidl.h>
 #include <vector>
 #include <string>
 #include <memory>
@@ -10,28 +11,28 @@ class DeviceList {
     private:
         struct Camera : public IDevice {
             std::wstring friendlyName;
-            std::wstring path;
+            std::wstring symbolicLink;
             std::wstring id;
-            IMoniker* moniker;
-            
-            Camera() : moniker(nullptr) {}
+            IMFActivate* activate;
+
+            Camera() : activate(nullptr) {}
             Camera(
                 const std::wstring& name,
-                const std::wstring& path,
-                const std::wstring& id,
-                IMoniker* moniker
+                const std::wstring& link,
+                const std::wstring& deviceId,
+                IMFActivate* pActivate
             ) :
             friendlyName(name),
-            path(path),
-            id(id),
-            moniker(moniker) {
-                if(moniker) moniker->AddRef();
+            symbolicLink(link),
+            id(deviceId),
+            activate(pActivate) {
+                if(activate) activate->AddRef();
             }
-            
+
             ~Camera() {
-                if(moniker) {
-                    moniker->Release();
-                    moniker = nullptr;
+                if(activate) {
+                    activate->Release();
+                    activate = nullptr;
                 }
             }
 
@@ -44,24 +45,14 @@ class DeviceList {
             std::wstring getType() const override {
                 return L"Camera";
             }
-
-            IBaseFilter* createFilter() const override {
-                if(!moniker) return nullptr;
-                IBaseFilter* pFilter = nullptr;
-                HRESULT hr = moniker->BindToObject(0, 0, IID_IBaseFilter, (void**)&pFilter);
-                return SUCCEEDED(hr) ? pFilter : nullptr;
+            IMFActivate* getActivate() const override {
+                return activate;
             }
-
             bool isAvailable() const override {
-                IBaseFilter* filter = createFilter();
-                if(filter) {
-                    filter->Release();
-                    return true;
-                }
-                return false;
+                return activate != nullptr;
             }
         };
-
+    
     public:
         std::vector<std::unique_ptr<IDevice>> devices;
         DeviceList();

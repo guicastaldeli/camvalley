@@ -1,37 +1,36 @@
 #pragma once
-#include <windows.h>
-#include <dshow.h>
-#include <qedit.h>
+#include <Windows.h>
+#include <mfapi.h>
+#include <mfidl.h>
+#include <mfreadwrite.h>
+#include <shlwapi.h>
+#include <string>
+#include <vector>
+#pragma comment(lib, "mf.lib")
+#pragma comment(lib, "mfplat.lib")
+#pragma comment(lib, "mfreadwrite.lib")
+#pragma comment(lib, "mfuuid.lib")
+#pragma comment(lib, "shlwapi.lib")
+#pragma comment(lib, "ole32.lib")
 #include "device_controller.h"
 
 class CaptureController {
     private:
-        IGraphBuilder* pGraph;
-        ICaptureGraphBuilder2* pCapture;
-        IBaseFilter* pDevice;
-        IBaseFilter* pGrabberFilter;
-        ISampleGrabber* pGrabber;
-        IMediaControl* pControl;
-        IMediaEvent* pEvent;
+        IMFMediaSource* pVideoSource;
+        IMFSourceReader* pReader;
+        IMFActivate** ppDevices;
+        UINT32 deviceCount;
         HWND hwndParent;
         HWND hwndVideo;
-        bool isRunning;
 
-        AM_MEDIA_TYPE mt;
-        BITMAPINFOHEADER* pbmi;
-
+        std::wstring currentDeviceId;
         DeviceController deviceController;
         bool isRunning;
-        std::wstring currentDeviceId;
 
-        bool createGraph();
-        bool setupGrabber();
-        bool renderStream();
-        bool connectDevice(IBaseFilter* device);
-        static HRESULT __stdcall sampleCB(
-            double sampleTime, 
-            IMediaSample* pSample
-        );
+        bool createVideoWindow();
+        bool setupDevice(const std::wstring& deviceId);
+        bool createSourceReader();
+        HRESULT updateVideoWindow();
 
     public:
         CaptureController();
@@ -52,12 +51,7 @@ class CaptureController {
             int w,
             int h
         );
-        void resize(
-            int x,
-            int y,
-            int w,
-            int h
-        );
+        void resize(int x, int y, int w, int h);
         bool refreshDevices();
         IDevice* getCurrentDevice() const;
 
@@ -67,6 +61,5 @@ class CaptureController {
         std::wstring getCurrentDeviceId() const {
             return currentDeviceId;
         }
-
         void cleanup();
 };

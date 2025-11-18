@@ -1,26 +1,20 @@
-#pragma comment(lib, "strmiids.lib")
-#pragma comment(lib, "ole32.lib")
-#pragma comment(lib, "oleaut32.lib")
 #include <iostream>
 #include "capture_controller.h"
 
-CaptureController::CaptureController() : 
-    pGraph(nullptr),
-    pCapture(nullptr),
-    pDevice(nullptr),
-    pGrabberFilter(nullptr),
-    pGrabber(nullptr),
-    pControl(nullptr),
-    pEvent(nullptr),
+CaptureController::CaptureController() :
+    pVideoSource(nullptr),
+    pReader(nullptr),
+    ppDevices(nullptr),
+    deviceCount(0),
     hwndParent(nullptr),
     hwndVideo(nullptr),
-    isRunning(false),
-    pbmi(nullptr) 
+    isRunning(false)
 {
-    ZeroMemory(&mt, sizeof(AM_MEDIA_TYPE));
+    MFStartup(MF_VERSION);
 }
 CaptureController::~CaptureController() {
     cleanup();
+    MFShutdown();
 }
 
 bool CaptureController::init(
@@ -31,37 +25,22 @@ bool CaptureController::init(
     int h
 ) {
     hwndParent = parent;
-    hwndVideo = CreateWindow(
-        L"Static",
-        L"",
-        WS_CHILD | WS_VISIBLE,
-        x,
-        y,
-        w,
-        h,
-        hwndParent,
-        NULL,
-        GetModuleHandle(NULL),
-        NULL
-    );
-    if(!hwndVideo) {
-        return false;
-    }
+    if(!createVideoWindow()) return false;
+    resize(x, y, w, h);
 
-    HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
-    if(FAILED(hr)) return false;
     if(!refreshDevices()) return false;
-
     if(deviceController.getDeviceCount() > 0) {
         auto* fDevice = deviceController.getDevice(0);
-        if(fDevice) return initWithDevice(
-            parent,
-            fDevice->getId(),
-            x,
-            y,
-            w,
-            h
-        );
+        if(fDevice) {
+            return initWithDevice(
+                parent,
+                fDevice->getId(),
+                x,
+                y,
+                w,
+                h
+            );
+        }
     }
 
     return false;
@@ -78,175 +57,152 @@ bool CaptureController::initWithDevice(
     hwndParent = parent;
     currentDeviceId = deviceId;
     if(!hwndVideo) {
-        hwndVideo = CreateWindow(
-            L"Static",
-            L"",
-            WS_CHILD | WS_VISIBLE,
-            w,
-            y,
-            w,
-            h,
-            hwndParent,
-            NULL,
-            GetModuleHandle(NULL),
-            NULL
-        );
-        if(!hwndVideo) {
+        if(!createVideoWindow()) {
             return false;
         }
-    } else {
-        resize(x, y, w, h);
     }
 
+    resize(x, y, w, h);
     cleanup();
-    CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
-    if(!createGraph()) return false;
+    return setupDevice(deviceId);
+}
 
+/*
+** Create Video Window
+*/
+bool CaptureController::createVideoWindow() {
+    hwndVideo = CreateWindow(
+        L"Static",
+        L"",
+        WS_CHILD | WS_VISIBLE | WS_BORDER,
+        0, 0, 100, 100,
+        hwndParent,
+        NULL,
+        GetModuleHandle(NULL),
+        NULL
+    );
+
+    return hwndVideo != nullptr;
+}
+
+/*
+** Setup Device
+*/
+bool CaptureController::setupDevice(const std::wstring& deviceId) {
     IDevice* device = deviceController.findDevice(deviceId);
     if(!device) return false;
 
-    pDevice = device->createFilter();
-    if(!pDevice) return false;
-    if(!setupGrabber()) return false;
-    if(!renderStream()) return false;
+    IMFAttributes* pAttrs = nullptr;
+    HRESULT hr = MFCreateAttributes(&pAttrs, 1);
+    if(FAILED(hr)) return false;
 
-    return true;
-}
-
-/*
-** Create Graph
-*/
-bool CaptureController::createGraph() {
-    HRESULT hr = CoCreateInstance(
-        CLSID_FilterGraph,
-        NULL,
-        CLSCTX_INPROC_SERVER,
-        IID_IGraphBuilder,
-        (void**)&pCapture
+    hr = pAttrs->SetGUID(
+        MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE,
+        MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID
     );
     if(FAILED(hr)) {
+        pAttrs->Release();
         return false;
     }
 
-    hr = pCapture->SetFiltergraph(pGraph);
-    if(FAILED(hr)) return false;
-
-    hr = pGraph->QueryInterface(IID_IMediaControl, (void**)&pControl);
-    if(FAILED(hr)) return false;
-
-    hr = pGraph->QueryInterface(IID_IMediaEvent, (void**)&pEvent);
-    return SUCCEEDED(hr);
-}
-
-bool CaptureController::setupGrabber() {
-    HRESULT hr = CoCreateInstance(
-        CLSID_SampleGrabber,
-        NULL,
-        CLSCTX_INPROC_SERVER,
-        IID_IBaseFilter,
-        (void**)&pGrabberFilter
+    hr = pAttrs->SetString(
+        MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK,
+        deviceId.c_str()
     );
     if(FAILED(hr)) {
+        pAttrs->Release();
         return false;
     }
 
-    hr = pGraph->AddFilter(pGrabberFilter, L"Sample Grabber");
+    hr = MFCreateDeviceSource(pAttrs, &pVideoSource);
+    pAttrs->Release();
     if(FAILED(hr)) return false;
 
-    hr = pGrabberFilter->QueryInterface(IID_ISampleGrabber, (void**)&pGrabber);
-    if(FAILED(hr)) return false;
-
-    ZeroMemory(&mt, sizeof(AM_MEDIA_TYPE));
-    mt.majortype = MEDIATYPE_Video;
-    mt.subtype = MEDIASUBTYPE_RGB24;
-    hr = pGrabber->SetMediaType(&mt);
-    if(FAILED(hr)) return false;
-
-    hr = pGrabber->SetCallback(NULL, 0);
-    hr = pGrabber->SetOneShot(FALSE);
-    hr = pGrabber->SetBufferSamples(TRUE);
-
-    return true;
+    return createSourceReader();
 }
 
-/*
-** Render Stream
-*/
-bool CaptureController::renderStream() {
-    if(!pDevice) return false;
-
-    HRESULT hr = pGraph->AddFilter(pDevice, L"Video Capture");
+bool CaptureController::createSourceReader() {
+    IMFAttributes* pAttrs = nullptr;
+    HRESULT hr = MFCreateAttributes(&pAttrs, 1);
     if(FAILED(hr)) return false;
 
-    hr = pCapture->RenderStream(
-        &PIN_CATEGORY_PREVIEW,
-        &MEDIATYPE_Video,
-        pDevice,
-        NULL,
-        NULL
-    );
-    if(FAILED(hr)) {
-        return false;
-    }
+    hr = pAttrs->SetUnknown(MF_SOURCE_READER_ASYNC_CALLBACK, nullptr);
+    hr = pAttrs->SetUINT32(MF_SOURCE_READER_DISCONNECT_MEDIASOURCE_ON_SHUTDOWN, TRUE);
+    hr = MFCreateSourceReaderFromMediaSource(pVideoSource, pAttrs, &pReader);
+    pAttrs->Release();
+    if(FAILED(hr)) return false;
 
-    IVideoWindow* pVideoWindow = NULL;
-    hr = pGraph->QueryInterface(IID_IVideoWindow, (void**)&pVideoWindow);
+    hr = pReader->SetStreamSelection(MF_SOURCE_READER_ALL_STREAMS, FALSE);
+    hr = pReader->SetStreamSelection(MF_SOURCE_READER_FIRST_VIDEO_STREAM, TRUE);
+
+    IMFMediaType* pMediaType = nullptr;
+    hr = MFCreateMediaType(&pMediaType);
     if(SUCCEEDED(hr)) {
-        pVideoWindow->put_Owner((OAHWND)hwndVideo);
-        pVideoWindow->put_WindowState(WS_CHILD | WS_CLIPSIBLINGS);
+        hr = pMediaType->SetGUID(
+            MF_MT_MAJOR_TYPE,
+            MFMediaType_Video
+        );
+        hr = pMediaType->SetGUID(
+            MF_MT_SUBTYPE,
+            MFVideoFormat_RGB32
+        );
+        hr = pReader->SetCurrentMediaType(
+            MF_SOURCE_READER_FIRST_VIDEO_STREAM,
+            nullptr,
+            pMediaType
+        );
+    }
 
-        RECT rect;
-        if(GetClientRect(hwndVideo, &rect)) {
-            pVideoWindow->SetWindowPosition(0, 0, rect.right, rect.bottom);
+    isRunning = true;
+    return SUCCEEDED(hr);
+} 
+
+HRESULT CaptureController::updateVideoWindow() {
+    if(!hwndVideo || !pReader) return E_FAIL;
+
+    IMFSample* pSample = nullptr;
+    DWORD streamIndex;
+    DWORD flags;
+    LONGLONG timestamp;
+
+    HRESULT hr = pReader->ReadSample(
+        MF_SOURCE_READER_FIRST_AUDIO_STREAM,
+        0,
+        &streamIndex,
+        &flags,
+        &timestamp,
+        &pSample
+    );
+    if(SUCCEEDED(hr)) {
+        if(flags & MF_SOURCE_READERF_ENDOFSTREAM) {
+            isRunning = false;
         }
-        pVideoWindow->Release();
+
+        if(pSample) {
+            IMFMediaBuffer* pBuffer = nullptr;
+            hr = pSample->ConvertToContiguousBuffer(&pBuffer);
+
+            if(SUCCEEDED(hr)) {
+                BYTE* pData = nullptr;
+                DWORD length = 0;
+
+                hr = pBuffer->Lock(&pData, nullptr, &length);
+                if(SUCCEEDED(hr) && pData) {
+                    pBuffer->Unlock();
+                }
+                pBuffer->Release();
+            }
+            pSample->Release();
+        }
     }
 
-    hr = pGrabber->GetConnectedMediaType(&mt);
-    if(SUCCEEDED(hr) && mt.formattype == FORMAT_VideoInfo) {
-        VIDEOINFOHEADER* pVih = (VIDEOINFOHEADER*)mt.pbFormat;
-        pbmi = &pVih->bmiHeader;
-    }
-
-    if(pControl) {
-        hr = pControl->Run();
-        if(SUCCEEDED(hr)) isRunning = true;
-    }
-
-    return true;
-}
-
-bool CaptureController::connectDevice(IBaseFilter* device) {
-    return device != nullptr;
-}
-
-HRESULT __stdcall CaptureController::sampleCB(
-    double sampleTime, 
-    IMediaSample* pSample
-) {
-    return S_OK;
+    return hr;
 }
 
 void CaptureController::resize(int x, int y, int w, int h) {
     if(hwndVideo) {
         MoveWindow(hwndVideo, x, y, w, h, TRUE);
-
-        IVideoWindow* pVideoWindow = NULL;
-        if(
-            pGraph &&
-            SUCCEEDED(pGraph->QueryInterface(
-                IID_IVideoWindow,
-                (void**)&pVideoWindow
-            ))
-        ) {
-            pVideoWindow->SetWindowPosition(0, 0, w, h);
-            pVideoWindow->Release();
-        }
     }
-}
-
-bool CaptureController::refreshDevices() {
-    return deviceController.setDevices();
 }
 
 IDevice* CaptureController::getCurrentDevice() const {
@@ -254,45 +210,26 @@ IDevice* CaptureController::getCurrentDevice() const {
 }
 
 void CaptureController::cleanup() {
-    if(pControl && isRunning) {
-        pControl->Stop();
-        isRunning = false;
-    }
+    isRunning = false;
 
-    if(pControl) {
-        pControl->Release();
-        pControl = nullptr;
+    if(pReader) {
+        pReader->Release();
+        pReader = nullptr;
     }
-    if(pEvent) {
-        pEvent->Release();
-        pEvent = nullptr;
+    if(pVideoSource) {
+        pVideoSource->Release();
+        pVideoSource = nullptr;
     }
-    if(pGrabber) {
-        pGrabber->Release();
-        pGrabber = nullptr;
+    if(ppDevices) {
+        for(UINT32 i = 0; i < deviceCount; i++) {
+            if(ppDevices[i]) {
+                ppDevices[i]->Release();
+            }
+        }
+        CoTaskMemFree(ppDevices);
+        ppDevices = nullptr;
+        deviceCount = 0;
     }
-    if(pGrabberFilter) {
-        pGrabberFilter->Release();
-        pGrabberFilter = nullptr;
-    }
-    if(pDevice) {
-        pDevice->Release();
-        pDevice = nullptr;
-    }
-    if(pCapture) {
-        pCapture->Release();
-        pCapture = nullptr;
-    }
-    if(pGraph) {
-        pGraph->Release();
-        pGraph = nullptr;
-    }
-
-    if(mt.pbFormat) {
-        CoTaskMemFree(mt.pbFormat);
-        mt.pbFormat = NULL;
-    }
-    pbmi = nullptr;
     if(hwndVideo) {
         DestroyWindow(hwndVideo);
         hwndVideo = nullptr;

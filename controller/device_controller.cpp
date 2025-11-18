@@ -1,7 +1,3 @@
-#pragma once
-#pragma comment(lib, "strmiids.lib")
-#pragma comment(lib, "ole32.lib")
-#include <algorithm>
 #include "device_controller.h"
 
 DeviceController::DeviceController() {}
@@ -72,5 +68,5 @@ void DeviceController::addDevice(std::unique_ptr<IDevice> device) {
 }
 
 void DeviceController::cleanup() {
-    clear();
+    deviceList.cleanup();
 }

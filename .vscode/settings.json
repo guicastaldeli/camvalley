@@ -3,6 +3,8 @@
         "*.embeddedhtml": "html",
         "iostream": "cpp",
         "algorithm": "cpp",
-        "*.inc": "cpp"
+        "*.inc": "cpp",
+        "string": "cpp",
+        "vector": "cpp"
     }
 }
