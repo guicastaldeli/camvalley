@@ -15,6 +15,9 @@ void DeviceList::cleanup() {
     devices.clear();
 }
 
+/*
+** Camera
+*/
 bool DeviceList::setCamera() {
     cleanup();
 
@@ -42,12 +45,10 @@ bool DeviceList::setCamera() {
 
     hr = MFEnumDeviceSources(pAttrs, &ppDevices, &count);
     pAttrs->Release();
-    
     if(FAILED(hr)) {
         std::wcout << L"MFEnumDeviceSources failed: " << hr << std::endl;
         return false;
     }
-    
     if(count == 0) {
         std::wcout << L"No cameras found" << std::endl;
         return false;
@@ -66,37 +67,36 @@ bool DeviceList::setCamera() {
             &friendlyName,
             &nameLength
         );
-        if(FAILED(hr) || !friendlyName) {
-            std::wcout << L"Failed to get friendly name for device " << i << std::endl;
-            continue;
+        std::wstring deviceName = L"Unkown Camera";
+        std::wstring deviceId = L"camera_" + std::to_wstring(i);
+        if(SUCCEEDED(hr) && friendlyName) {
+            deviceName = friendlyName;
         }
+
         hr = ppDevices[i]->GetAllocatedString(
             MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK,
             &symbolicLink,
             &linkLength
         );
-        
-        std::wstring deviceId = L"camera_" + std::to_wstring(i);
-        if(symbolicLink) {
+        if(SUCCEEDED(hr) && symbolicLink) {
             deviceId = symbolicLink;
         }
-        std::wcout << L"Camera " << i << L": " << friendlyName << std::endl;
-        std::wcout << L"  ID: " << deviceId << std::endl;
+
+        std::wcout << L"Camera" << i << L": " << deviceName << std::endl;
+        std::wcout << L" ID: " << deviceId << std::endl;
 
         devices.push_back(
             std::make_unique<Camera>(
-                std::wstring(friendlyName),
+                deviceName,
                 symbolicLink ? std::wstring(symbolicLink) : L"",
                 deviceId,
                 ppDevices[i]
             )
         );
-        ppDevices[i]->AddRef();
 
         if(friendlyName) CoTaskMemFree(friendlyName);
         if(symbolicLink) CoTaskMemFree(symbolicLink);
     }
-
     CoTaskMemFree(ppDevices);
     
     std::wcout << L"Successfully added " << devices.size() << L" devices to list" << std::endl;

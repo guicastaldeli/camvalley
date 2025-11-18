@@ -31,7 +31,7 @@ bool CaptureController::init(
 
     if(!refreshDevices()) return false;
     if(deviceController.getDeviceCount() > 0) {
-        auto* fDevice = deviceController.getDevice(1);
+        auto* fDevice = deviceController.getDevice(0);
         if(fDevice) {
             return initWithDevice(
                 parent,
@@ -133,7 +133,7 @@ bool CaptureController::setupDevice(const std::wstring& deviceId) {
         return false;
     }
 
-    std::wcout << L"MFCreateDeviceSource failed: " << hr << std::endl;
+    std::wcout << L"Device Source created! " << hr << std::endl;
     return createSourceReader();
 }
 
@@ -146,7 +146,6 @@ bool CaptureController::createSourceReader() {
         return false;
     }
 
-    hr = pAttrs->SetUnknown(MF_SOURCE_READER_ASYNC_CALLBACK, nullptr);
     hr = pAttrs->SetUINT32(MF_SOURCE_READER_DISCONNECT_MEDIASOURCE_ON_SHUTDOWN, TRUE);
     hr = MFCreateSourceReaderFromMediaSource(pVideoSource, pAttrs, &pReader);
     pAttrs->Release();
@@ -155,36 +154,75 @@ bool CaptureController::createSourceReader() {
         return false;
     }
 
-    std::wcout << L"MFCreateSourceReaderFromMediaSource failed: " << hr << std::endl;
-    hr = pReader->SetStreamSelection(MF_SOURCE_READER_ALL_STREAMS, FALSE);
+    IMFMediaType* pNativeType = nullptr;
+    hr = pReader->GetNativeMediaType(
+        MF_SOURCE_READER_FIRST_VIDEO_STREAM,
+        0,
+        &pNativeType
+    );
+    if(SUCCEEDED(hr)) {
+        GUID majorType = {0};
+        GUID subtype = {0};
+
+        pNativeType->GetGUID(MF_MT_MAJOR_TYPE, &majorType);
+        pNativeType->GetGUID(MF_MT_SUBTYPE, &subtype);
+
+        WCHAR guidStr[39];
+        StringFromGUID2(subtype, guidStr, 39);
+        std::wcout << L"Native media subtype: " << guidStr << std::endl;
+
+        pNativeType->Release();
+    }
+
     hr = pReader->SetStreamSelection(MF_SOURCE_READER_FIRST_VIDEO_STREAM, TRUE);
+    if(FAILED(hr)) {
+        std::wcout << L"Failed to select video stream: " << hr << std::endl;
+    }
 
     IMFMediaType* pMediaType = nullptr;
     hr = MFCreateMediaType(&pMediaType);
     if(SUCCEEDED(hr)) {
-        hr = pMediaType->SetGUID(
-            MF_MT_MAJOR_TYPE,
-            MFMediaType_Video
-        );
-        hr = pMediaType->SetGUID(
-            MF_MT_SUBTYPE,
-            MFVideoFormat_RGB32
-        );
-        hr = pReader->SetCurrentMediaType(
-            MF_SOURCE_READER_FIRST_VIDEO_STREAM,
-            nullptr,
-            pMediaType
-        );
-        pMediaType->Release();
-        if(FAILED(hr)) {
-            std::wcout << L"Failed to set media type: " << hr << std::endl;
-        } else {
-            std::wcout << L"Failed to set media type: " << hr << std::endl;
+        hr = pMediaType->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
+        const GUID* formats[] = {
+            &MFVideoFormat_RGB32,
+            &MFVideoFormat_RGB24, 
+            &MFVideoFormat_YUY2,
+            &MFVideoFormat_NV12,
+            &MFVideoFormat_MJPG
+        };
+
+        bool formatSet = false;
+        for(int i = 0; i < 5 && !formatSet; i++) {
+            hr = pMediaType->SetGUID(MF_MT_SUBTYPE, *formats[i]);
+            if(SUCCEEDED(hr)) {
+                hr = pReader->SetCurrentMediaType(
+                    MF_SOURCE_READER_FIRST_VIDEO_STREAM,
+                    nullptr,
+                    pMediaType
+                );
+                if(SUCCEEDED(hr)) {
+                    WCHAR guidStr[39];
+                    StringFromGUID2(*formats[i], guidStr, 39);
+                    std::wcout << L"Successfully set media type to: " << guidStr << std::endl;
+                    formatSet = true;
+                    break;
+                }
+            }
         }
+        if(!formatSet) {
+            std::wcout << L"Could not set any format, using default" << std::endl;
+            hr = pReader->SetCurrentMediaType(
+                MF_SOURCE_READER_FIRST_VIDEO_STREAM,
+                nullptr,
+                nullptr
+            );
+        }
+
+        pMediaType->Release();
     }
 
     isRunning = true;
-    std::wcout << L"Source reader setup completed successfully" << std::endl;
+    std::wcout << L"Source reader setup complete" << std::endl;
     return true;
 } 
 
