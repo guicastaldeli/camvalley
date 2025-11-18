@@ -4,6 +4,7 @@
 #include <string>
 #include <device_list.h>
 #include <device_interface.h>
+#include <memory>
 
 class DeviceController {
     private:
@@ -13,12 +14,10 @@ class DeviceController {
         DeviceController();
         ~DeviceController();
 
-        bool enumDevices();
-        size_t getDeviceCount() const {
-            return deviceList.devices.size();
-        }
+        bool setDevices();
         IDevice* getDevice(size_t i) const;
         std::vector<IDevice*> getDevices() const;
+        size_t getDeviceCount() const;
 
         IDevice* findDevice(const std::wstring& id) const;
         std::vector<IDevice*> findDevices(const std::wstring& nameContains) const;

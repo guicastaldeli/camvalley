@@ -8,8 +8,8 @@
 
 class DeviceList {    
     private:
-        struct Camera : IDevice {
-            std::wstring name;
+        struct Camera : public IDevice {
+            std::wstring friendlyName;
             std::wstring path;
             std::wstring id;
             IMoniker* moniker;
@@ -21,7 +21,7 @@ class DeviceList {
                 const std::wstring& id,
                 IMoniker* moniker
             ) :
-            name(name),
+            friendlyName(name),
             path(path),
             id(id),
             moniker(moniker) {
@@ -36,7 +36,7 @@ class DeviceList {
             }
 
             std::wstring getName() const override {
-                return name;
+                return friendlyName;
             }
             std::wstring getId() const override {
                 return id;
@@ -66,4 +66,7 @@ class DeviceList {
         std::vector<std::unique_ptr<IDevice>> devices;
         DeviceList();
         ~DeviceList();
+        void cleanup();
+
+        bool setCamera();
 };

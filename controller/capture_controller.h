@@ -2,6 +2,7 @@
 #include <windows.h>
 #include <dshow.h>
 #include <qedit.h>
+#include "device_controller.h"
 
 class CaptureController {
     private:
@@ -19,9 +20,14 @@ class CaptureController {
         AM_MEDIA_TYPE mt;
         BITMAPINFOHEADER* pbmi;
 
+        DeviceController deviceController;
+        bool isRunning;
+        std::wstring currentDeviceId;
+
         bool createGraph();
         bool setupGrabber();
         bool renderStream();
+        bool connectDevice(IBaseFilter* device);
         static HRESULT __stdcall sampleCB(
             double sampleTime, 
             IMediaSample* pSample
@@ -38,13 +44,29 @@ class CaptureController {
             int w,
             int h
         );
-        void start();
-        void stop();
-        void cleanup();
+        bool initWithDevice(
+            HWND parent,
+            const std::wstring& deviceId,
+            int x,
+            int y,
+            int w,
+            int h
+        );
         void resize(
             int x,
             int y,
             int w,
             int h
         );
+        bool refreshDevices();
+        IDevice* getCurrentDevice() const;
+
+        bool isCapturing() const {
+            return isRunning;
+        }
+        std::wstring getCurrentDeviceId() const {
+            return currentDeviceId;
+        }
+
+        void cleanup();
 };
