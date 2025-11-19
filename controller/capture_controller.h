@@ -4,6 +4,7 @@
 #include <mfidl.h>
 #include <mfreadwrite.h>
 #include <shlwapi.h>
+#include <evr.h>
 #include <string>
 #include <vector>
 #pragma comment(lib, "mf.lib")
@@ -12,6 +13,7 @@
 #pragma comment(lib, "mfuuid.lib")
 #pragma comment(lib, "shlwapi.lib")
 #pragma comment(lib, "ole32.lib")
+#pragma comment(lib, "evr.lib")
 #include "device_controller.h"
 
 class CaptureController {
@@ -19,6 +21,8 @@ class CaptureController {
         IMFMediaSource* pVideoSource;
         IMFSourceReader* pReader;
         IMFActivate** ppDevices;
+        IMFMediaSession* pSession;
+        IMFVideoDisplayControl* pVideoDisplay;
         UINT32 deviceCount;
         HWND hwndParent;
         HWND hwndVideo;
@@ -30,11 +34,13 @@ class CaptureController {
         bool createVideoWindow();
         bool setupDevice(const std::wstring& deviceId);
         bool createSourceReader();
+        bool createEVR();
         HRESULT updateVideoWindow();
 
     public:
         CaptureController();
         ~CaptureController();
+        HWND getVideoWindow() const {return hwndVideo;}
 
         bool init(
             HWND parent,

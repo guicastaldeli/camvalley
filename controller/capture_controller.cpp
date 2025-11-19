@@ -1,5 +1,10 @@
-#include <iostream>
+#pragma comment(lib, "evr.lib")
+#pragma comment(lib, "strmiids.lib")
+#pragma comment(lib, "dxva2.lib")
 #include "capture_controller.h"
+#include <iostream>
+#include <evr.h>
+#include <d3d9.h>
 
 CaptureController::CaptureController() :
     pVideoSource(nullptr),
@@ -8,6 +13,8 @@ CaptureController::CaptureController() :
     deviceCount(0),
     hwndParent(nullptr),
     hwndVideo(nullptr),
+    pSession(nullptr),
+    pVideoDisplay(nullptr),
     isRunning(false)
 {
     HRESULT hr = MFStartup(MF_VERSION);
@@ -26,21 +33,28 @@ bool CaptureController::init(
     int h
 ) {
     hwndParent = parent;
-    if(!createVideoWindow()) return false;
+    std::wcout << L"Parent window: " << hwndParent << std::endl;
+    
+    if(!hwndVideo) {
+        if(!createVideoWindow()) {
+            std::wcout << L"Failed to create video window!" << std::endl;
+            return false;
+        }
+        std::wcout << L"Video window created: " << hwndVideo << std::endl;
+    }
     resize(x, y, w, h);
 
-    if(!refreshDevices()) return false;
+    if(!refreshDevices()) {
+        std::wcout << L"No devices found!" << std::endl;
+        return false;
+    }
+    
+    std::wcout << L"Found " << deviceController.getDeviceCount() << L" devices" << std::endl;
     if(deviceController.getDeviceCount() > 0) {
         auto* fDevice = deviceController.getDevice(0);
         if(fDevice) {
-            return initWithDevice(
-                parent,
-                fDevice->getId(),
-                x,
-                y,
-                w,
-                h
-            );
+            std::wcout << L"Using device: " << fDevice->getName() << std::endl;
+            return initWithDevice(parent, fDevice->getId(), x, y, w, h);
         }
     }
 
@@ -57,6 +71,8 @@ bool CaptureController::initWithDevice(
 ) {
     hwndParent = parent;
     currentDeviceId = deviceId;
+    
+    cleanup();
     if(!hwndVideo) {
         if(!createVideoWindow()) {
             return false;
@@ -64,7 +80,6 @@ bool CaptureController::initWithDevice(
     }
 
     resize(x, y, w, h);
-    cleanup();
     return setupDevice(deviceId);
 }
 
@@ -72,18 +87,47 @@ bool CaptureController::initWithDevice(
 ** Create Video Window
 */
 bool CaptureController::createVideoWindow() {
-    hwndVideo = CreateWindow(
-        L"Static",
-        L"",
-        WS_CHILD | WS_VISIBLE | WS_BORDER,
-        0, 0, 100, 100,
+    if(!hwndParent || !IsWindow(hwndParent)) {
+        std::wcout << L"Invalid parent window handle: " << hwndParent << std::endl;
+        return false;
+    }
+
+    static bool classRegistered = false;
+    static const wchar_t* VIDEO_WINDOW_CLASS = L"VideoWindow";
+    if(!classRegistered) {
+        WNDCLASS wc = {};
+        wc.lpfnWndProc = DefWindowProc;
+        wc.hInstance = GetModuleHandle(NULL);
+        wc.lpszClassName = VIDEO_WINDOW_CLASS;
+        wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+        if(RegisterClass(&wc)) {
+            classRegistered = true;
+            std::wcout << L"Video window registered!" << std::endl;
+        } else {
+            std::wcout << L"Failed to register video window :(" << std::endl;
+            VIDEO_WINDOW_CLASS = L"Static";
+        }
+    }
+
+    hwndVideo = CreateWindowExW(
+        WS_EX_NOPARENTNOTIFY,
+        VIDEO_WINDOW_CLASS,
+        NULL,
+        WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
+        10, 10, 100, 100,
         hwndParent,
         NULL,
         GetModuleHandle(NULL),
         NULL
     );
+    if(!hwndVideo) {
+        DWORD err = GetLastError();
+        std::wcout << L"CreateWindowEx failed erroor: " << err << std::endl;
+        return false;
+    }
 
-    return hwndVideo != nullptr;
+    std::wcout << L"Video window created!: " << hwndVideo << std::endl;
+    return true;
 }
 
 /*
@@ -134,143 +178,215 @@ bool CaptureController::setupDevice(const std::wstring& deviceId) {
     }
 
     std::wcout << L"Device Source created! " << hr << std::endl;
-    return createSourceReader();
+    return createEVR();
 }
 
-bool CaptureController::createSourceReader() {
-    std::wcout << L"Creating source reader..." << std::endl;
-    IMFAttributes* pAttrs = nullptr;
-    HRESULT hr = MFCreateAttributes(&pAttrs, 1);
+bool CaptureController::createEVR() {
+    HRESULT hr = S_OK;
+    IMFActivate* pSinkActivate = NULL;
+    IMFTopology* pTopology = NULL;
+    IMFTopologyNode* pSourceNode = NULL;
+    IMFTopologyNode* pOutputNode = NULL;
+    IMFStreamDescriptor* pSourceSD = NULL;
+    IMFPresentationDescriptor* pPD = NULL;
+    IMFMediaTypeHandler* pHandler = NULL;
+    IMFMediaEvent* pEvent = NULL;
+    DWORD streamCount = 0;
+    BOOL fSelected = FALSE;
+    DWORD videoStreamIndex = (DWORD)-1;
+    MediaEventType eventType;
+    std::wcout << L"Setting EVR pipeline" << std::endl;
+
+    std::wcout << L"Setting EVR pipeline with window: " << hwndVideo << std::endl;
+    hr = MFCreateVideoRendererActivate(hwndVideo, &pSinkActivate);
     if(FAILED(hr)) {
-        std::wcout << L"Failed to create reader attributes: " << hr << std::endl;
-        return false;
+        std::wcout << L"Failed to create video renderer activate: " << hr << std::endl;
+        goto done;
     }
 
-    hr = pAttrs->SetUINT32(MF_SOURCE_READER_DISCONNECT_MEDIASOURCE_ON_SHUTDOWN, TRUE);
-    hr = MFCreateSourceReaderFromMediaSource(pVideoSource, pAttrs, &pReader);
-    pAttrs->Release();
+    hr = MFCreateTopology(&pTopology);
     if(FAILED(hr)) {
-        std::wcout << L"MFCreateSourceReaderFromMediaSource failed: " << hr << std::endl;
-        return false;
+        std::wcout << L"Failed to create topology: " << hr << std::endl;
+        goto done;
     }
 
-    IMFMediaType* pNativeType = nullptr;
-    hr = pReader->GetNativeMediaType(
-        MF_SOURCE_READER_FIRST_VIDEO_STREAM,
-        0,
-        &pNativeType
-    );
-    if(SUCCEEDED(hr)) {
-        GUID majorType = {0};
-        GUID subtype = {0};
-
-        pNativeType->GetGUID(MF_MT_MAJOR_TYPE, &majorType);
-        pNativeType->GetGUID(MF_MT_SUBTYPE, &subtype);
-
-        WCHAR guidStr[39];
-        StringFromGUID2(subtype, guidStr, 39);
-        std::wcout << L"Native media subtype: " << guidStr << std::endl;
-
-        pNativeType->Release();
-    }
-
-    hr = pReader->SetStreamSelection(MF_SOURCE_READER_FIRST_VIDEO_STREAM, TRUE);
+    hr = pVideoSource->CreatePresentationDescriptor(&pPD);
     if(FAILED(hr)) {
-        std::wcout << L"Failed to select video stream: " << hr << std::endl;
+        std::wcout << L"Failed to create presentatin descriptor: " << hr << std::endl;
+        goto done;
     }
 
-    IMFMediaType* pMediaType = nullptr;
-    hr = MFCreateMediaType(&pMediaType);
-    if(SUCCEEDED(hr)) {
-        hr = pMediaType->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
-        const GUID* formats[] = {
-            &MFVideoFormat_RGB32,
-            &MFVideoFormat_RGB24, 
-            &MFVideoFormat_YUY2,
-            &MFVideoFormat_NV12,
-            &MFVideoFormat_MJPG
-        };
-
-        bool formatSet = false;
-        for(int i = 0; i < 5 && !formatSet; i++) {
-            hr = pMediaType->SetGUID(MF_MT_SUBTYPE, *formats[i]);
+    hr = pPD->GetStreamDescriptorCount(&streamCount);
+    if(FAILED(hr) || streamCount == 0) {
+        std::wcout << L"No streams available: " << hr << std::endl;
+        goto done;
+    }
+    for(DWORD i = 0; i < streamCount; i++) {
+        hr = pPD->GetStreamDescriptorByIndex(i, &fSelected, &pSourceSD);
+        if(SUCCEEDED(hr) && pSourceSD) {
+            hr = pSourceSD->GetMediaTypeHandler(&pHandler);
             if(SUCCEEDED(hr)) {
-                hr = pReader->SetCurrentMediaType(
-                    MF_SOURCE_READER_FIRST_VIDEO_STREAM,
-                    nullptr,
-                    pMediaType
-                );
-                if(SUCCEEDED(hr)) {
-                    WCHAR guidStr[39];
-                    StringFromGUID2(*formats[i], guidStr, 39);
-                    std::wcout << L"Successfully set media type to: " << guidStr << std::endl;
-                    formatSet = true;
+                GUID majorType = GUID_NULL;
+                hr = pHandler->GetMajorType(&majorType);
+                if(SUCCEEDED(hr) && majorType == MFMediaType_Video) {
+                    videoStreamIndex = i;
+                    std::wcout << L"Found video stream at index: " << i << std::endl;
                     break;
                 }
             }
+            if(pHandler) {
+                pHandler->Release();
+                pHandler = NULL;
+            }
+            if(pSourceSD) {
+                pSourceSD->Release();
+                pSourceSD = NULL;
+            }
         }
-        if(!formatSet) {
-            std::wcout << L"Could not set any format, using default" << std::endl;
-            hr = pReader->SetCurrentMediaType(
-                MF_SOURCE_READER_FIRST_VIDEO_STREAM,
-                nullptr,
-                nullptr
-            );
+    }
+    if(videoStreamIndex == (DWORD)-1) {
+        std::wcout << L"No video stream found!" << std::endl;
+        hr = E_FAIL;
+        goto done;
+    }
+    if(!pSourceSD) {
+        hr = pPD->GetStreamDescriptorByIndex(videoStreamIndex, &fSelected, &pSourceSD);
+        if(FAILED(hr)) {
+            std::wcout << L"Failed to get video stream descriptor: " << hr << std::endl;
+            goto done;
         }
+    }
 
-        pMediaType->Release();
+    hr = MFCreateTopologyNode(
+        MF_TOPOLOGY_SOURCESTREAM_NODE, 
+        &pSourceNode
+    );
+    if(FAILED(hr)) {
+        std::wcout << L"Failed to create source node: " << hr << std::endl;
+        goto done;
+    }
+    hr = pSourceNode->SetUnknown(MF_TOPONODE_SOURCE, pVideoSource);
+    if(FAILED(hr)) {
+        std::wcout << L"Failed to set source: " << hr << std::endl;
+        goto done;
+    }
+    hr = pSourceNode->SetUnknown(MF_TOPONODE_PRESENTATION_DESCRIPTOR, pPD);
+    if(FAILED(hr)) {
+        std::wcout << L"Failed to set presentation descriptor: " << hr << std::endl;
+        goto done;
+    }
+    hr = pSourceNode->SetUnknown(MF_TOPONODE_STREAM_DESCRIPTOR, pSourceSD);
+    if(FAILED(hr)) {
+        std::wcout << L"Failed to set stream descriptor: " << hr << std::endl;
+        goto done;
+    }
+
+    hr = MFCreateTopologyNode(
+        MF_TOPOLOGY_OUTPUT_NODE,
+        &pOutputNode
+    );
+    if(FAILED(hr)) {
+        std::wcout << L"Failed to create output node: " << hr << std::endl;
+        goto done;
+    }
+    hr = pOutputNode->SetObject(pSinkActivate);
+    if(FAILED(hr)) {
+        std::wcout << L"Failed to set sink activate: " << hr << std::endl;
+        goto done;
+    }
+    hr = pOutputNode->SetUINT32(MF_TOPONODE_STREAMID, 0);
+    if(FAILED(hr)) {
+        std::wcout << L"Failed to set stream ID: " << hr << std::endl;
+        goto done;
+    }
+    hr = pOutputNode->SetUINT32(MF_TOPONODE_NOSHUTDOWN_ON_REMOVE, FALSE);
+    if(FAILED(hr)) {
+        std::wcout << L"Failed to set no shutdown: " << hr << std::endl;
+        goto done;
+    }
+
+    hr = pTopology->AddNode(pSourceNode);
+    if(FAILED(hr)) {
+        std::wcout << L"Failed to add source node: " << hr << std::endl;
+        goto done;
+    }
+    hr = pTopology->AddNode(pOutputNode);
+    if(FAILED(hr)) {
+        std::wcout << L"Failed to add output node: " << hr << std::endl;
+        goto done;
+    }
+    hr = pSourceNode->ConnectOutput(0, pOutputNode, 0);
+    if(FAILED(hr)) {
+        std::wcout << L"Failed to connect nodes: " << hr << std::endl;
+        goto done;
+    }
+
+    hr = MFCreateMediaSession(NULL, &pSession);
+    if(FAILED(hr)) {
+        std::wcout << L"Failed to create media session: " << hr << std::endl;
+        goto done;
+    }
+    hr = pSession->SetTopology(
+        MFSESSION_SETTOPOLOGY_IMMEDIATE, 
+        pTopology
+    );
+    if(FAILED(hr)) {
+        std::wcout << L"Failed to set topology: " << hr << std::endl;
+        goto done;
+    }
+
+    hr = pSession->GetEvent(0, &pEvent);
+    if(SUCCEEDED(hr)) {
+        hr = pEvent->GetType(&eventType);
+        if(SUCCEEDED(hr)) {
+            std::wcout << L"First media event type: " << eventType << std::endl;
+        }
+        pEvent->Release();
+    }
+
+    PROPVARIANT varStart;
+    PropVariantInit(&varStart);
+    varStart.vt = VT_EMPTY;
+    hr = pSession->Start(&GUID_NULL, &varStart);
+    if(FAILED(hr)) {
+        std::cout << L"Failed to start sesison: " << hr << std::endl;
+        hr = pSession->Start(NULL, NULL);
+        if(FAILED(hr)) {
+            std::wcout << L"Alternative start failed: " << hr << std::endl;
+            goto done;
+        }
     }
 
     isRunning = true;
-    std::wcout << L"Source reader setup complete" << std::endl;
+    std::wcout << L"EVR setup complete!" << std::endl;
+    done:
+        if(pSourceNode) pSourceNode->Release();
+        if(pOutputNode) pOutputNode->Release();
+        if(pTopology) pTopology->Release();
+        if(pSinkActivate) pSinkActivate->Release();
+        if(pSourceSD) pSourceSD->Release();
+        if(pPD) pPD->Release();
+        if(pHandler) pHandler->Release();
+        if(pEvent) pEvent->Release();
+
+        return SUCCEEDED(hr);
+}
+
+bool CaptureController::createSourceReader() {
     return true;
 } 
 
 HRESULT CaptureController::updateVideoWindow() {
-    if(!hwndVideo || !pReader) return E_FAIL;
-
-    IMFSample* pSample = nullptr;
-    DWORD streamIndex;
-    DWORD flags;
-    LONGLONG timestamp;
-
-    HRESULT hr = pReader->ReadSample(
-        MF_SOURCE_READER_FIRST_VIDEO_STREAM,
-        0,
-        &streamIndex,
-        &flags,
-        &timestamp,
-        &pSample
-    );
-    if(SUCCEEDED(hr)) {
-        if(flags & MF_SOURCE_READERF_ENDOFSTREAM) {
-            isRunning = false;
-        }
-
-        if(pSample) {
-            IMFMediaBuffer* pBuffer = nullptr;
-            hr = pSample->ConvertToContiguousBuffer(&pBuffer);
-
-            if(SUCCEEDED(hr)) {
-                BYTE* pData = nullptr;
-                DWORD length = 0;
-
-                hr = pBuffer->Lock(&pData, nullptr, &length);
-                if(SUCCEEDED(hr) && pData) {
-                    pBuffer->Unlock();
-                }
-                pBuffer->Release();
-            }
-            pSample->Release();
-        }
-    }
-
-    return hr;
+    return S_OK;
 }
 
 void CaptureController::resize(int x, int y, int w, int h) {
     if(hwndVideo) {
         MoveWindow(hwndVideo, x, y, w, h, TRUE);
+        if(pVideoDisplay) {
+            RECT rc { 0, 0, w, h };
+            pVideoDisplay->SetVideoPosition(NULL, &rc);
+        }
     }
 }
 
@@ -285,6 +401,16 @@ bool CaptureController::refreshDevices() {
 void CaptureController::cleanup() {
     isRunning = false;
 
+    if(pSession) {
+        pSession->Stop();
+        pSession->Close();
+        pSession->Release();
+        pSession = nullptr;
+    }
+    if(pVideoDisplay) {
+        pVideoDisplay->Release();
+        pVideoDisplay = nullptr;
+    }
     if(pReader) {
         pReader->Release();
         pReader = nullptr;

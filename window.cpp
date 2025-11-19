@@ -1,4 +1,5 @@
 #include "window.h"
+#include <iostream>
 
 LRESULT CALLBACK Window::WindowProc(
     HWND hwnd,
@@ -26,40 +27,74 @@ LRESULT CALLBACK Window::WindowProc(
                     hwnd,
                     10,
                     10,
-                    300,
-                    300
+                    640,
+                    480
                 )) {
-                    MessageBox(hwnd, L"Failed to init cam!", L"Error", MB_OK);
+                    MessageBox(hwnd, L"Failed to init cam", L"Camera Error", MB_OK | MB_ICONERROR);
+                } else {
+                    std::wcout << L"Capture controller success!" << std::endl;
                 }
-                break;
+                return 0;
             case WM_SIZE:
                 {
                     int newWidth = LOWORD(lParam);
                     int newHeight = HIWORD(lParam);
+                    int videoWidth = newWidth - 150;
+                    int videoHeight = newHeight - 100;
                     pWindow->captureController.resize(
-                        20,
-                        20,
-                        newWidth - 40,
-                        newHeight - 40
+                        50,
+                        50,
+                        videoWidth,
+                        videoHeight
                     );
                 }
-                break;
+                return 0;
+            case WM_ERASEBKGND:
+                return 1;
             case WM_PAINT:
                 {
                     PAINTSTRUCT ps;
                     HDC hdc = BeginPaint(hwnd, &ps);
                     
-                    RECT rect = { 20, 10, 200, 30 };
+                    RECT clientRect;
+                    GetClientRect(hwnd, &clientRect);
+                    HBRUSH bgBrush = CreateSolidBrush(RGB(220, 220, 220));
+                    FillRect(hdc, &clientRect, bgBrush);
+                    DeleteObject(bgBrush);
+
+                    HWND hwndVideo = pWindow->captureController.getVideoWindow();
+                    if(hwndVideo && IsWindow(hwndVideo)) {
+                        RECT videoRect;
+                        if(GetWindowRect(hwndVideo, &videoRect)) {
+                            POINT topLeft = { videoRect.left, videoRect.top };
+                            POINT bottomRight = { videoRect.right, videoRect.bottom };
+                            ScreenToClient(hwnd, &topLeft);
+                            ScreenToClient(hwnd, &bottomRight);
+
+                            RECT borderRect = {
+                                topLeft.x - 2,
+                                topLeft.y - - 2,
+                                bottomRight.x + 2,
+                                bottomRight.y + 2
+                            };
+                            HBRUSH borderBrush = CreateSolidBrush(RGB(0, 200, 0));
+                            FrameRect(hdc, &borderRect, borderBrush);
+                            DeleteObject(borderBrush);
+                        }
+                    }
+
+                    RECT rect = { 550, 10, 800, 30 };
                     DrawText(
                         hdc,
-                        L"CamValley ULTRA ALPHA BUILD!",
+                        L"Camvalley ULTRA ALPHA BUILD!",
                         -1,
                         &rect,
                         DT_LEFT
                     );
+
                     EndPaint(hwnd, &ps);
                 }
-                break;
+                return 0;
             case WM_DESTROY:
                 pWindow->cleanup();
                 PostQuitMessage(0);
