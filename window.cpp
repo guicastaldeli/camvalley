@@ -28,7 +28,7 @@ LRESULT CALLBACK Window::WindowProc(
                     10,
                     10,
                     640,
-                    480
+                    460
                 )) {
                     MessageBox(hwnd, L"Failed to init cam", L"Camera Error", MB_OK | MB_ICONERROR);
                 } else {

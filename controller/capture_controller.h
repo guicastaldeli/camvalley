@@ -36,6 +36,7 @@ class CaptureController {
         bool createSourceReader();
         bool createEVR();
         HRESULT updateVideoWindow();
+        HRESULT configFormat(IMFMediaTypeHandler* pHandler);
 
     public:
         CaptureController();

@@ -5,6 +5,7 @@
 #include <iostream>
 #include <evr.h>
 #include <d3d9.h>
+#include <cmath>
 
 CaptureController::CaptureController() :
     pVideoSource(nullptr),
@@ -51,7 +52,7 @@ bool CaptureController::init(
     
     std::wcout << L"Found " << deviceController.getDeviceCount() << L" devices" << std::endl;
     if(deviceController.getDeviceCount() > 0) {
-        auto* fDevice = deviceController.getDevice(0);
+        auto* fDevice = deviceController.getDevice(1);
         if(fDevice) {
             std::wcout << L"Using device: " << fDevice->getName() << std::endl;
             return initWithDevice(parent, fDevice->getId(), x, y, w, h);
@@ -181,6 +182,9 @@ bool CaptureController::setupDevice(const std::wstring& deviceId) {
     return createEVR();
 }
 
+/*
+** Create EVR
+*/
 bool CaptureController::createEVR() {
     HRESULT hr = S_OK;
     IMFActivate* pSinkActivate = NULL;
@@ -231,6 +235,7 @@ bool CaptureController::createEVR() {
                 if(SUCCEEDED(hr) && majorType == MFMediaType_Video) {
                     videoStreamIndex = i;
                     std::wcout << L"Found video stream at index: " << i << std::endl;
+                    hr = configFormat(pHandler);
                     break;
                 }
             }
@@ -396,6 +401,83 @@ IDevice* CaptureController::getCurrentDevice() const {
 
 bool CaptureController::refreshDevices() {
     return deviceController.setDevices();
+}
+
+/*
+** Config Format
+*/
+HRESULT CaptureController::configFormat(IMFMediaTypeHandler* pHandler) {
+    HRESULT hr = S_OK;
+    IMFMediaType* pMediaType = NULL;
+    DWORD typeCount = 0;
+    
+    hr = pHandler->GetMediaTypeCount(&typeCount);
+    if (FAILED(hr)) return hr;
+
+    for(DWORD i = 0; i < typeCount; i++) {
+        hr = pHandler->GetMediaTypeByIndex(i, &pMediaType);
+        if(SUCCEEDED(hr)) {
+            UINT32 width = 0;
+            UINT32 height = 0;
+            GUID subtype = GUID_NULL;
+
+            hr = MFGetAttributeSize(
+                pMediaType,
+                MF_MT_FRAME_SIZE,
+                &width,
+                &height
+            );
+            if(SUCCEEDED(hr)) {
+                float targetRatio = 16.0f / 9.0f;
+                float aspectRatio = 
+                    static_cast<float>(width) /
+                    static_cast<float>(height);
+
+                if(std::fabs(aspectRatio - targetRatio) < 0.1f) {
+                    hr = pHandler->SetCurrentMediaType(pMediaType);
+                    if(SUCCEEDED(hr)) {
+                        std::wcout << L"Widescreen format success!" << std::endl;
+                        pMediaType->Release();
+                        return S_OK;
+                    }
+                }
+                pMediaType->Release();
+                pMediaType = NULL;
+                    
+            }
+        }
+    }
+
+    UINT32 commonWs[][2] = {
+        { 1920, 1080 },
+        { 1280, 720 },
+        { 1366, 768 },
+        { 1600, 900 },
+        { 1024, 576 },
+        { 854, 480 }
+    };
+    for(int i = 0; i < sizeof(commonWs) / sizeof(commonWs[0]); i++) {
+        hr = pHandler->GetMediaTypeByIndex(0, &pMediaType);
+        if(SUCCEEDED(hr)) {
+            hr = MFSetAttributeSize(
+                pMediaType,
+                MF_MT_FRAME_SIZE,
+                commonWs[i][0],
+                commonWs[i][1]
+            );
+            if(SUCCEEDED(hr)) {
+                hr = pHandler->SetCurrentMediaType(pMediaType);
+                if(SUCCEEDED(hr)) {
+                    pMediaType->Release();
+                    return S_OK;
+                }
+            }
+            pMediaType->Release();
+            pMediaType = NULL;
+        }
+    }
+
+    return E_FAIL;
 }
 
 void CaptureController::cleanup() {
