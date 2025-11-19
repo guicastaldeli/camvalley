@@ -40,7 +40,6 @@ class CaptureController {
     public:
         CaptureController();
         ~CaptureController();
-        HWND getVideoWindow() const {return hwndVideo;}
 
         bool init(
             HWND parent,
@@ -63,6 +62,9 @@ class CaptureController {
 
         bool isCapturing() const {
             return isRunning;
+        }
+        HWND getVideoWindow() const { 
+            return hwndVideo; 
         }
         std::wstring getCurrentDeviceId() const {
             return currentDeviceId;
