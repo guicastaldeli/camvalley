@@ -6,17 +6,16 @@
 #include "classifier.h"
 
 class HaarCascade {
-    private:
+    public:
         std::vector<StrongClassifier> stages;
         int baseWidth;
         int baseHeight;
+        bool loaded;
 
-    public:
         HaarCascade() : 
             baseWidth(24), 
             baseHeight(24) {}
 
-        bool loadFromFile(const std::string& fileName);
         std::vector<Rect> detectFaces(
             const std::vector<std::vector<float>>& integral,
             int minSize = 24,
@@ -25,5 +24,13 @@ class HaarCascade {
         );
         void addStage(const StrongClassifier& stage) {
             stages.push_back(stage);
+        }
+        
+        bool isLoaded() const {
+            return loaded && !stages.empty();
+        }
+        void clear() {
+            stages.clear();
+            loaded = false;
         }
 };

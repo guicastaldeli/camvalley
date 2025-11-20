@@ -198,33 +198,6 @@ bool StrongClassifier::classify(
 }
 
 /*
-** Create Integral Data
-*/
-std::vector<std::vector<float>> createIntegralImage(const std::vector<std::vector<unsigned char>>& image) {
-    int height = image.size();
-    int width = image[0].size();
-    std::vector<std::vector<float>> integral(
-        height,
-        std::vector<float>(width, 0)
-    );
-
-    integral[0][0] = image[0][0];
-    for(int x = 1; x < width; x++) {
-        integral[0][x] = integral[0][x-1] + image[0][x];
-    }
-
-    for(int y = 1; y < height; y++) {
-        float rowSum = 0;
-        for(int x = 0; x < width; x++) {
-            rowSum += image[y][x];
-            integral[y][x] = integral[y-1][x] + rowSum;
-        }
-    }
-
-    return integral;
-}
-
-/*
 ** Detect Faces
 */
 std::vector<Rect> HaarCascade::detectFaces(
