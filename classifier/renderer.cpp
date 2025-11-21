@@ -1,4 +1,10 @@
 #include "renderer.h"
+#include "../loader.h"
+
+bool Renderer::load(const std::string& fileName) {
+    Loader loader;
+    return loader.loadFile(fileName, faceCascade);
+}
 
 /*
 ** Create Integral Image

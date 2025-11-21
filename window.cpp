@@ -33,6 +33,14 @@ LRESULT CALLBACK Window::WindowProc(
                     MessageBox(hwnd, L"Failed to init cam", L"Camera Error", MB_OK | MB_ICONERROR);
                 } else {
                     std::wcout << L"Capture controller success!" << std::endl;
+                    pWindow->captureController.enableFaceDetection(true);
+                    SetTimer(hwnd, 1, 100, NULL);
+                }
+                return 0;
+            case WM_TIMER:
+                if(wParam == 1) {
+                    pWindow->captureController.processFrame();
+                    InvalidateRect(hwnd, NULL, TRUE);
                 }
                 return 0;
             case WM_SIZE:
@@ -73,7 +81,7 @@ LRESULT CALLBACK Window::WindowProc(
 
                             RECT borderRect = {
                                 topLeft.x - 2,
-                                topLeft.y - - 2,
+                                topLeft.y - 2,
                                 bottomRight.x + 2,
                                 bottomRight.y + 2
                             };
@@ -82,6 +90,8 @@ LRESULT CALLBACK Window::WindowProc(
                             DeleteObject(borderBrush);
                         }
                     }
+
+                    pWindow->captureController.getRenderer().draw(hdc);
 
                     RECT rect = { 550, 10, 800, 30 };
                     DrawText(

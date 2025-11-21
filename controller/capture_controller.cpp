@@ -16,7 +16,8 @@ CaptureController::CaptureController() :
     hwndVideo(nullptr),
     pSession(nullptr),
     pVideoDisplay(nullptr),
-    isRunning(false)
+    isRunning(false),
+    faceDetectionEnabled(true)
 {
     HRESULT hr = MFStartup(MF_VERSION);
     if(FAILED(hr)) std::wcout << L"MFStartup failed: " << hr << std::endl;
@@ -478,6 +479,126 @@ HRESULT CaptureController::configFormat(IMFMediaTypeHandler* pHandler) {
     }
 
     return E_FAIL;
+}
+
+/*
+** Enable Face Detection
+*/
+void CaptureController::enableFaceDetection(bool enable) {
+    faceDetectionEnabled = enable;
+    if(enable && !renderer.faceCascade.isLoaded()) {
+        loadCascade("../data/haarcascade_frontalface_default.xml");
+    }
+}
+
+/*
+** Load Cascade
+*/
+void CaptureController::loadCascade(const std::string& file) {
+    if(renderer.load(file)) {
+        std::wcout << L"File loaded!: " << file.c_str() << std::endl;
+    } else {
+        std::wcout << L"Failed to load file :( " << file.c_str() << std::endl;  
+    }
+}
+
+/*
+** Process Frame
+*/
+void CaptureController::processFrame() {
+    if(!faceDetectionEnabled || !isRunning || !renderer.faceCascade.isLoaded()) {
+        return;
+    }
+
+    if(pReader) {
+        IMFMediaBuffer* pBuffer = NULL;
+        IMFSample* pSample = NULL;
+        DWORD streamIndex;
+        DWORD flags;
+        LONGLONG timestamp;
+
+        HRESULT hr = pReader->ReadSample(
+            MF_SOURCE_READER_FIRST_VIDEO_STREAM,
+            0,
+            &streamIndex,
+            &flags,
+            &timestamp,
+            &pSample
+        );
+        if(SUCCEEDED(hr) && pSample) {
+            hr = pSample->ConvertToContiguousBuffer(&pBuffer);
+            if(SUCCEEDED(hr)) {
+                BYTE* pData = NULL;
+                DWORD maxLength;
+                DWORD currentLength;
+
+                hr = pBuffer->Lock(
+                    &pData,
+                    &maxLength,
+                    &currentLength
+                );
+                if(SUCCEEDED(hr)) {
+                    std::vector<std::vector<unsigned char>> frame = convertFrameToGrayscale(pData, currentLength);
+                    renderer.processFrameForFaces(frame);
+                    pBuffer->Unlock();
+                }
+                pBuffer->Release();
+            }
+            pSample->Release();
+        }
+    } else {
+        std::cout << "FATAL ERR." << std::endl;
+    }
+}
+
+
+std::vector<std::vector<unsigned char>> CaptureController::convertFrameToGrayscale(
+    BYTE* pData,
+    DWORD length
+) {
+    IMFMediaType* pType = NULL;
+    UINT32 width = 0;
+    UINT32 height = 0;
+
+    HRESULT hr = pReader->GetCurrentMediaType(
+        MF_SOURCE_READER_FIRST_VIDEO_STREAM,
+        &pType
+    );
+    if(SUCCEEDED(hr) && pType) {
+        hr = MFGetAttributeSize(
+            pType,
+            MF_MT_FRAME_SIZE,
+            &width,
+            &height
+        );
+        pType->Release();
+    }
+    if(width == 0 || height == 0) {
+        width = 640;
+        height = 480;
+    }
+
+    std::vector<std::vector<unsigned char>> grayscaleFrame(
+        height,
+        std::vector<unsigned char>(width)
+    );
+    for(UINT32 y = 0; y < height; y++) {
+        for(UINT32 x = 0; x < width; x++) {
+            DWORD pixelOffset = (y * width + x) * 4;
+            if(pixelOffset + 3 < length) {
+                BYTE b = pData[pixelOffset];
+                BYTE g = pData[pixelOffset + 1];
+                BYTE r = pData[pixelOffset + 2];
+
+                unsigned char gray = static_cast<unsigned char>(
+                    0.299f * r +
+                    0.587f * g +
+                    0.114f * b
+                );
+                grayscaleFrame[y][x] = gray;
+            }
+        }
+    }
 }
 
 void CaptureController::cleanup() {
