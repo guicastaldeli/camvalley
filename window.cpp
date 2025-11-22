@@ -34,13 +34,6 @@ LRESULT CALLBACK Window::WindowProc(
                 } else {
                     std::wcout << L"Capture controller success!" << std::endl;
                     pWindow->captureController.enableFaceDetection(true);
-                    SetTimer(hwnd, 1, 200, NULL);
-                }
-                return 0;
-            case WM_TIMER:
-                if(wParam == 1) {
-                    pWindow->captureController.processFrame();
-                    InvalidateRect(hwnd, NULL, FALSE);
                 }
                 return 0;
             case WM_SIZE:
@@ -106,7 +99,6 @@ LRESULT CALLBACK Window::WindowProc(
                 }
                 return 0;
             case WM_DESTROY:
-                KillTimer(hwnd, 1);
                 pWindow->cleanup();
                 PostQuitMessage(0);
                 break;

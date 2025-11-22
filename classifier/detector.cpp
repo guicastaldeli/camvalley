@@ -161,7 +161,7 @@ float calcFeatureValue(
 ** Classify
 */
 bool WeakClassifier::classify(
-    const::std::vector<std::vector<float>>& integral,
+    const std::vector<std::vector<float>>& integral,
     int x,
     int y,
     float scale
@@ -190,16 +190,17 @@ bool StrongClassifier::classify(
     int y,
     float scale
 ) const {
+    // Debug: print first few calls
+    static int callCount = 0;
+    if (callCount < 5) {
+        std::wcout << L"StrongClassifier::classify called at (" << x << "," << y << ") with " 
+                   << weakClassifiers.size() << " weak classifiers" << std::endl;
+        callCount++;
+    }
+    
     float sum = 0;
     for(const auto& wc : weakClassifiers) {
-        if(
-            wc.classify(
-                integral,
-                x,
-                y,
-                scale
-            )
-        ) {
+        if(wc.classify(integral, x, y, scale)) {
             sum += wc.weight;
         }
     }
