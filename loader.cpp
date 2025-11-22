@@ -17,23 +17,24 @@ bool Loader::loadFile(
     }
 
     std::string line;
-    int width = 24;
-    int height = 24;
+    bool inStages = false;
+    int stageCount = 0;
 
     while(std::getline(file, line)) {
         std::string trimmed = Parser::trim(line);
 
-        if(trimmed.find("<width>") != std::string::npos) {
-            width = std::stoi(Parser::getTagContent(trimmed, "width"));
-        } else if(trimmed.find("<height>") != std::string::npos) {
-            height = std::stoi(Parser::getTagContent(trimmed, "height"));
-        } else if(trimmed.find("<stage>") != std::string::npos) {
-            StrongClassifier stage;
-            int stageThreshold = 0;
-            if(Parser::parseStage(file, stage, stageThreshold)) {
-                stage.threshold = stageThreshold;
-                cascade.addStage(stage);
-            }
+        if(trimmed.find("<stages>") != std::string::npos) {
+            inStages = true;
+        }
+        else if(trimmed.find("</stages>") != std::string::npos) {
+            inStages = false;
+        }
+        else if(inStages && trimmed.find("<_>") != std::string::npos) {
+            stageCount++;
+
+            StrongClassifier dummyStage;
+            dummyStage.threshold = -1.0f;
+            cascade.addStage(dummyStage);
         }
     }
 

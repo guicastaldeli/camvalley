@@ -34,13 +34,13 @@ LRESULT CALLBACK Window::WindowProc(
                 } else {
                     std::wcout << L"Capture controller success!" << std::endl;
                     pWindow->captureController.enableFaceDetection(true);
-                    SetTimer(hwnd, 1, 100, NULL);
+                    SetTimer(hwnd, 1, 200, NULL);
                 }
                 return 0;
             case WM_TIMER:
                 if(wParam == 1) {
                     pWindow->captureController.processFrame();
-                    InvalidateRect(hwnd, NULL, TRUE);
+                    InvalidateRect(hwnd, NULL, FALSE);
                 }
                 return 0;
             case WM_SIZE:
@@ -63,7 +63,7 @@ LRESULT CALLBACK Window::WindowProc(
                 {
                     PAINTSTRUCT ps;
                     HDC hdc = BeginPaint(hwnd, &ps);
-                    
+
                     RECT clientRect;
                     GetClientRect(hwnd, &clientRect);
                     HBRUSH bgBrush = CreateSolidBrush(RGB(220, 220, 220));
@@ -106,6 +106,7 @@ LRESULT CALLBACK Window::WindowProc(
                 }
                 return 0;
             case WM_DESTROY:
+                KillTimer(hwnd, 1);
                 pWindow->cleanup();
                 PostQuitMessage(0);
                 break;

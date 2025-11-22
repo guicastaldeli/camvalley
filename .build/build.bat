@@ -5,12 +5,12 @@ echo ================================
 
 call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
 
-cl /EHsc /std:c++17 /DUNICODE /D_UNICODE /I".." /I"..\controller" /I"..\device" ..\*.cpp ..\controller\*.cpp ..\device\*.cpp ^
-   /link mf.lib mfplat.lib mfreadwrite.lib mfuuid.lib ole32.lib shlwapi.lib user32.lib gdi32.lib
+cl /EHsc /std:c++17 /DUNICODE /D_UNICODE /I".." /I"..\controller" /I"..\device" /I"..\classifier" ..\*.cpp ..\controller\*.cpp ..\device\*.cpp ..\classifier\*.cpp ^
+   /link mf.lib mfplat.lib mfreadwrite.lib mfuuid.lib ole32.lib shlwapi.lib user32.lib gdi32.lib /out:main.exe
 
 if %errorlevel% equ 0 (
     echo Build successful! Running program...
-    main.exe
+    .\main.exe
 ) else (
     echo Build failed!
     pause

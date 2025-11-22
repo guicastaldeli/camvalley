@@ -3,6 +3,7 @@
 #include <string>
 #include <memory>
 #include <fstream>
+#include <iostream>
 #include "classifier.h"
 
 class HaarCascade {
@@ -14,7 +15,8 @@ class HaarCascade {
 
         HaarCascade() : 
             baseWidth(24), 
-            baseHeight(24) {}
+            baseHeight(24),
+            loaded(false) {}
 
         std::vector<Rect> detectFaces(
             const std::vector<std::vector<float>>& integral,
@@ -22,12 +24,18 @@ class HaarCascade {
             int maxSize = 400,
             float scaleFactor = 1.25f
         );
+        std::vector<Rect> nonMaximumSuppression(
+            const std::vector<Rect>& faces,
+            float overlapThreshold = 0.3f
+        );
         void addStage(const StrongClassifier& stage) {
             stages.push_back(stage);
+            loaded = !stages.empty();
         }
         
         bool isLoaded() const {
-            return loaded && !stages.empty();
+            bool result = loaded && !stages.empty();
+            return result;
         }
         void clear() {
             stages.clear();

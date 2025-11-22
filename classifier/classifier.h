@@ -23,6 +23,8 @@ class WeakClassifier {
 
         bool classify(
             const std::vector<std::vector<float>>& integral,
+            int x,
+            int y,
             float scale
         ) const;
 };

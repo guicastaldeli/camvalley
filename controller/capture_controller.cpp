@@ -17,13 +17,17 @@ CaptureController::CaptureController() :
     pSession(nullptr),
     pVideoDisplay(nullptr),
     isRunning(false),
-    faceDetectionEnabled(true)
+    faceDetectionEnabled(true),
+    renderer(),
+    frameReady(false)
 {
+    InitializeCriticalSection(&frameCriticalSection);
     HRESULT hr = MFStartup(MF_VERSION);
     if(FAILED(hr)) std::wcout << L"MFStartup failed: " << hr << std::endl;
 }
 CaptureController::~CaptureController() {
     cleanup();
+    DeleteCriticalSection(&frameCriticalSection);
     MFShutdown();
 }
 
@@ -101,7 +105,8 @@ bool CaptureController::createVideoWindow() {
         wc.lpfnWndProc = DefWindowProc;
         wc.hInstance = GetModuleHandle(NULL);
         wc.lpszClassName = VIDEO_WINDOW_CLASS;
-        wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+        wc.hbrBackground = NULL;
+        wc.style = CS_HREDRAW | CS_VREDRAW;
         if(RegisterClass(&wc)) {
             classRegistered = true;
             std::wcout << L"Video window registered!" << std::endl;
@@ -127,6 +132,14 @@ bool CaptureController::createVideoWindow() {
         std::wcout << L"CreateWindowEx failed erroor: " << err << std::endl;
         return false;
     }
+    SetWindowLong(
+        hwndVideo, 
+        GWL_STYLE,
+        GetWindowLong(
+            hwndVideo,
+            GWL_STYLE
+        ) & ~WS_BORDER
+    );
 
     std::wcout << L"Video window created!: " << hwndVideo << std::endl;
     return true;
@@ -134,6 +147,9 @@ bool CaptureController::createVideoWindow() {
 
 /*
 ** Setup Device
+*/
+/*
+** Setup Device with Separate Sources for EVR and Frame Capture
 */
 bool CaptureController::setupDevice(const std::wstring& deviceId) {
     std::wcout << L"Setting up device: " << deviceId << std::endl;
@@ -144,43 +160,101 @@ bool CaptureController::setupDevice(const std::wstring& deviceId) {
     }
     std::wcout << L"Found device: " << device->getName() << std::endl;
 
-    IMFAttributes* pAttrs = nullptr;
-    HRESULT hr = MFCreateAttributes(&pAttrs, 1);
+    // Create FIRST source for EVR display
+    IMFAttributes* pAttrsEVR = nullptr;
+    HRESULT hr = MFCreateAttributes(&pAttrsEVR, 1);
     if(FAILED(hr)) {
-        std::wcout << L"Failed to create attributes: " << hr << std::endl;
+        std::wcout << L"Failed to create attributes for EVR source" << std::endl;
         return false;
     }
 
-    hr = pAttrs->SetGUID(
+    hr = pAttrsEVR->SetGUID(
         MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE,
         MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID
     );
     if(FAILED(hr)) {
-        std::wcout << L"Failed to set source type GUID: " << hr << std::endl;
-        pAttrs->Release();
+        std::wcout << L"Failed to set source type GUID for EVR" << std::endl;
+        pAttrsEVR->Release();
         return false;
     }
 
-    hr = pAttrs->SetString(
+    hr = pAttrsEVR->SetString(
         MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK,
         deviceId.c_str()
     );
     if(FAILED(hr)) {
-        std::wcout << L"Failed to set symbolic link: " << hr << std::endl;
-        pAttrs->Release();
+        std::wcout << L"Failed to set symbolic link for EVR" << std::endl;
+        pAttrsEVR->Release();
         return false;
     }
 
-    std::wcout << L"Creating device source..." << std::endl;
-    hr = MFCreateDeviceSource(pAttrs, &pVideoSource);
-    pAttrs->Release();
+    std::wcout << L"Creating EVR device source..." << std::endl;
+    hr = MFCreateDeviceSource(pAttrsEVR, &pVideoSource);
+    pAttrsEVR->Release();
     if(FAILED(hr)) {
-        std::wcout << L"MFCreateDeviceSource failed: " << hr << std::endl;
+        std::wcout << L"MFCreateDeviceSource failed for EVR: " << hr << std::endl;
         return false;
     }
 
-    std::wcout << L"Device Source created! " << hr << std::endl;
-    return createEVR();
+    std::wcout << L"EVR Device Source created! " << hr << std::endl;
+    
+    // Create EVR with first source
+    if(!createEVR()) {
+        std::wcout << L"Failed to create EVR pipeline" << std::endl;
+        return false;
+    }
+
+    // Create SECOND source for frame capture
+    IMFMediaSource* pCaptureSource = nullptr;
+    IMFAttributes* pAttrsCapture = nullptr;
+    hr = MFCreateAttributes(&pAttrsCapture, 1);
+    if(FAILED(hr)) {
+        std::wcout << L"Failed to create attributes for capture source" << std::endl;
+        return false;
+    }
+
+    hr = pAttrsCapture->SetGUID(
+        MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE,
+        MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID
+    );
+    if(FAILED(hr)) {
+        std::wcout << L"Failed to set source type GUID for capture" << std::endl;
+        pAttrsCapture->Release();
+        return false;
+    }
+
+    hr = pAttrsCapture->SetString(
+        MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK,
+        deviceId.c_str()
+    );
+    if(FAILED(hr)) {
+        std::wcout << L"Failed to set symbolic link for capture" << std::endl;
+        pAttrsCapture->Release();
+        return false;
+    }
+
+    std::wcout << L"Creating capture device source..." << std::endl;
+    hr = MFCreateDeviceSource(pAttrsCapture, &pCaptureSource);
+    pAttrsCapture->Release();
+    if(FAILED(hr)) {
+        std::wcout << L"MFCreateDeviceSource failed for capture: " << hr << std::endl;
+        return false;
+    }
+
+    std::wcout << L"Capture Device Source created! " << hr << std::endl;
+
+    // Create source reader with second source
+    if(!createSourceReader(pCaptureSource)) {
+        std::wcout << L"Failed to create source reader" << std::endl;
+        pCaptureSource->Release();
+        return false;
+    }
+
+    // We don't need to keep the capture source reference since source reader owns it
+    pCaptureSource->Release();
+
+    std::wcout << L"Both EVR and capture source setup complete!" << std::endl;
+    return true;
 }
 
 /*
@@ -378,9 +452,71 @@ bool CaptureController::createEVR() {
         return SUCCEEDED(hr);
 }
 
-bool CaptureController::createSourceReader() {
-    return true;
-} 
+bool CaptureController::createSourceReader(IMFMediaSource* pCaptureSource) {
+    if(!pCaptureSource) {
+        std::wcout << L"No capture source available" << std::endl;
+        return false;
+    }
+
+    IMFAttributes* pAttrs = nullptr;
+    HRESULT hr = MFCreateAttributes(&pAttrs, 1);
+    if(FAILED(hr)) {
+        std::wcout << L"Failed to create attributes for source reader" << std::endl;
+        return false;
+    }
+
+    hr = pAttrs->SetUINT32(
+        MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING,
+        TRUE
+    );
+    if(FAILED(hr)) {
+        std::wcout << L"Failed to enable video processing" << std::endl;
+        pAttrs->Release();
+        return false;
+    }
+
+    hr = MFCreateSourceReaderFromMediaSource(
+        pCaptureSource,  // Use the provided capture source
+        pAttrs,
+        &pReader
+    );
+    pAttrs->Release();
+    if(FAILED(hr)) {
+        std::wcout << L"Failed to create source reader: " << hr << std::endl;
+        return false;
+    }
+
+    IMFMediaType* pMediaType = nullptr;
+    hr = MFCreateMediaType(&pMediaType);
+    bool success = false;
+    
+    if(SUCCEEDED(hr)) {
+        hr = pMediaType->SetGUID(
+            MF_MT_MAJOR_TYPE,
+            MFMediaType_Video
+        );
+        hr = pMediaType->SetGUID(
+            MF_MT_SUBTYPE,
+            MFVideoFormat_RGB32
+        );
+        if(SUCCEEDED(hr)) {
+            hr = pReader->SetCurrentMediaType(
+                MF_SOURCE_READER_FIRST_VIDEO_STREAM,
+                nullptr,
+                pMediaType
+            );
+            success = SUCCEEDED(hr);
+        }
+        pMediaType->Release();
+    }
+
+    if(success) {
+        std::wcout << L"Source reader created successfully!" << std::endl;
+    } else {
+        std::wcout << L"Failed to set media type for source reader: " << hr << std::endl;
+    }
+    return success;
+}
 
 HRESULT CaptureController::updateVideoWindow() {
     return S_OK;
@@ -486,8 +622,10 @@ HRESULT CaptureController::configFormat(IMFMediaTypeHandler* pHandler) {
 */
 void CaptureController::enableFaceDetection(bool enable) {
     faceDetectionEnabled = enable;
-    if(enable && !renderer.faceCascade.isLoaded()) {
-        loadCascade("../data/haarcascade_frontalface_default.xml");
+    if(enable && !renderer.isCascadeLoaded()) {
+        std::wcout << L"Loading cascade..." << std::endl;
+        loadCascade("../.data/haarcascade_frontalface_default.xml");
+        renderer.forceEnable();
     }
 }
 
@@ -506,57 +644,94 @@ void CaptureController::loadCascade(const std::string& file) {
 ** Process Frame
 */
 void CaptureController::processFrame() {
-    if(!faceDetectionEnabled || !isRunning || !renderer.faceCascade.isLoaded()) {
+    if(!pReader) {
+        std::wcout << L"No source reader available" << std::endl;
+        return;
+    }
+    
+    IMFMediaBuffer* pBuffer = nullptr;
+    IMFSample* pSample = nullptr;
+    DWORD streamIndex;
+    DWORD flags;
+    LONGLONG timestamp;
+    
+    HRESULT hr = pReader->ReadSample(
+        MF_SOURCE_READER_FIRST_VIDEO_STREAM,
+        0,
+        &streamIndex,
+        &flags,
+        &timestamp,
+        &pSample
+    );
+    if (FAILED(hr)) {
+        std::wcout << L"Failed to read sample!: " << hr << std::endl;
+        return;
+    }
+    if (!pSample) {
+        std::wcout << L"No sample available!" << std::endl;
+        return;
+    }
+    
+    if (flags & MF_SOURCE_READERF_ENDOFSTREAM) {
+        std::wcout << L"end of stream reached" << std::endl;
+        pSample->Release();
+        return;
+    }
+    hr = pSample->ConvertToContiguousBuffer(&pBuffer);
+    if (FAILED(hr)) {
+        std::wcout << L"failed to convert sample to buffer: " << hr << std::endl;
+        pSample->Release();
         return;
     }
 
-    if(pReader) {
-        IMFMediaBuffer* pBuffer = NULL;
-        IMFSample* pSample = NULL;
-        DWORD streamIndex;
-        DWORD flags;
-        LONGLONG timestamp;
+    BYTE* pData = nullptr;
+    DWORD maxLength;
+    DWORD currentLength;
 
-        HRESULT hr = pReader->ReadSample(
-            MF_SOURCE_READER_FIRST_VIDEO_STREAM,
-            0,
-            &streamIndex,
-            &flags,
-            &timestamp,
-            &pSample
-        );
-        if(SUCCEEDED(hr) && pSample) {
-            hr = pSample->ConvertToContiguousBuffer(&pBuffer);
-            if(SUCCEEDED(hr)) {
-                BYTE* pData = NULL;
-                DWORD maxLength;
-                DWORD currentLength;
-
-                hr = pBuffer->Lock(
-                    &pData,
-                    &maxLength,
-                    &currentLength
-                );
-                if(SUCCEEDED(hr)) {
-                    std::vector<std::vector<unsigned char>> frame = convertFrameToGrayscale(pData, currentLength);
-                    renderer.processFrameForFaces(frame);
-                    pBuffer->Unlock();
-                }
-                pBuffer->Release();
-            }
-            pSample->Release();
-        }
-    } else {
-        std::cout << "FATAL ERR." << std::endl;
+    hr = pBuffer->Lock(
+        &pData, 
+        &maxLength, 
+        &currentLength
+    );
+    if (FAILED(hr)) {
+        std::wcout << L"failed to lock buffer: " << hr << std::endl;
+        pBuffer->Release();
+        pSample->Release();
+        return;
     }
+
+    std::wcout << L"Buffer data length: " << currentLength << std::endl;
+    if (pData && currentLength > 0) {
+        auto frame = convertFrameToGrayscale(pData, currentLength);
+
+        EnterCriticalSection(&frameCriticalSection);
+        currentFrame = frame;
+        frameReady = true;
+        LeaveCriticalSection(&frameCriticalSection);
+
+        renderer.processFrameForFaces(frame);
+    } else {
+        std::wcout << L"no frame data available!!" << std::endl;
+    }
+
+    pBuffer->Unlock();
+    pBuffer->Release();
+    pSample->Release();
 }
 
+void CaptureController::getCurrentFrame(std::vector<std::vector<unsigned char>>& frame) {
+    EnterCriticalSection(&frameCriticalSection);
+    if(frameReady) frame = currentFrame;
+    LeaveCriticalSection(&frameCriticalSection);
+}
 
 std::vector<std::vector<unsigned char>> CaptureController::convertFrameToGrayscale(
     BYTE* pData,
     DWORD length
 ) {
-    IMFMediaType* pType = NULL;
+    std::wcout << L"TESTSTTSTSTSTTSTS" << std::endl;
+    
+    IMFMediaType* pType = nullptr;
     UINT32 width = 0;
     UINT32 height = 0;
 
@@ -564,7 +739,7 @@ std::vector<std::vector<unsigned char>> CaptureController::convertFrameToGraysca
         MF_SOURCE_READER_FIRST_VIDEO_STREAM,
         &pType
     );
-    if(SUCCEEDED(hr) && pType) {
+    if (SUCCEEDED(hr) && pType) {
         hr = MFGetAttributeSize(
             pType,
             MF_MT_FRAME_SIZE,
@@ -572,20 +747,26 @@ std::vector<std::vector<unsigned char>> CaptureController::convertFrameToGraysca
             &height
         );
         pType->Release();
+    } else {
+        std::wcout << L"Failed to get current media type" << std::endl;
     }
-    if(width == 0 || height == 0) {
+    
+    if (width == 0 || height == 0) {
         width = 640;
         height = 480;
+        std::wcout << L"Using default" << width << L"x" << height << std::endl;
     }
-
+    
     std::vector<std::vector<unsigned char>> grayscaleFrame(
         height,
-        std::vector<unsigned char>(width)
+        std::vector<unsigned char>(width, 0)
     );
-    for(UINT32 y = 0; y < height; y++) {
-        for(UINT32 x = 0; x < width; x++) {
+    
+    int convertedPixels = 0;
+    for (UINT32 y = 0; y < height; y++) {
+        for (UINT32 x = 0; x < width; x++) {
             DWORD pixelOffset = (y * width + x) * 4;
-            if(pixelOffset + 3 < length) {
+            if (pixelOffset + 3 < length) {
                 BYTE b = pData[pixelOffset];
                 BYTE g = pData[pixelOffset + 1];
                 BYTE r = pData[pixelOffset + 2];
@@ -596,9 +777,11 @@ std::vector<std::vector<unsigned char>> CaptureController::convertFrameToGraysca
                     0.114f * b
                 );
                 grayscaleFrame[y][x] = gray;
+                convertedPixels++;
             }
         }
     }
+    return grayscaleFrame;
 }
 
 void CaptureController::cleanup() {

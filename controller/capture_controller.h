@@ -35,9 +35,13 @@ class CaptureController {
         Renderer renderer;
         bool faceDetectionEnabled;
 
+        CRITICAL_SECTION frameCriticalSection;
+        std::vector<std::vector<unsigned char>> currentFrame;
+        bool frameReady;
+
         bool createVideoWindow();
         bool setupDevice(const std::wstring& deviceId);
-        bool createSourceReader();
+        bool createSourceReader(IMFMediaSource* pCaptureSource);
         bool createEVR();
         HRESULT updateVideoWindow();
         HRESULT configFormat(IMFMediaTypeHandler* pHandler);
@@ -67,9 +71,12 @@ class CaptureController {
 
         void enableFaceDetection(bool enable);
         void loadCascade(const std::string& file);
-        std::vector<std::vector<unsigned char>> convertFrameToGrayscale(BYTE* pData, DWORD length);
-
+        std::vector<std::vector<unsigned char>> convertFrameToGrayscale(
+            BYTE* pData, 
+            DWORD length
+        );
         void processFrame();
+        
         bool isCapturing() const {
             return isRunning;
         }
@@ -82,5 +89,6 @@ class CaptureController {
         Renderer& getRenderer() {
             return renderer;
         }
+        void getCurrentFrame(std::vector<std::vector<unsigned char>>& frame);
         void cleanup();
 };
