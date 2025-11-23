@@ -92,62 +92,6 @@ bool CaptureController::initWithDevice(
 }
 
 /*
-** Create Video Window
-*/
-bool CaptureController::createVideoWindow() {
-    if(!hwndParent || !IsWindow(hwndParent)) {
-        std::wcout << L"Invalid parent window handle: " << hwndParent << std::endl;
-        return false;
-    }
-
-    static bool classRegistered = false;
-    static const wchar_t* VIDEO_WINDOW_CLASS = L"VideoWindow";
-    if(!classRegistered) {
-        WNDCLASS wc = {};
-        wc.lpfnWndProc = DefWindowProc;
-        wc.hInstance = GetModuleHandle(NULL);
-        wc.lpszClassName = VIDEO_WINDOW_CLASS;
-        wc.hbrBackground = NULL;
-        wc.style = CS_HREDRAW | CS_VREDRAW;
-        if(RegisterClass(&wc)) {
-            classRegistered = true;
-            std::wcout << L"Video window registered!" << std::endl;
-        } else {
-            std::wcout << L"Failed to register video window :(" << std::endl;
-            VIDEO_WINDOW_CLASS = L"Static";
-        }
-    }
-
-    hwndVideo = CreateWindowExW(
-        WS_EX_NOPARENTNOTIFY,
-        VIDEO_WINDOW_CLASS,
-        NULL,
-        WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
-        10, 10, 100, 100,
-        hwndParent,
-        NULL,
-        GetModuleHandle(NULL),
-        NULL
-    );
-    if(!hwndVideo) {
-        DWORD err = GetLastError();
-        std::wcout << L"CreateWindowEx failed erroor: " << err << std::endl;
-        return false;
-    }
-    SetWindowLong(
-        hwndVideo, 
-        GWL_STYLE,
-        GetWindowLong(
-            hwndVideo,
-            GWL_STYLE
-        ) & ~WS_BORDER
-    );
-
-    std::wcout << L"Video window created!: " << hwndVideo << std::endl;
-    return true;
-}
-
-/*
 ** Setup Device
 */
 bool CaptureController::setupDevice(const std::wstring& deviceId) {
@@ -194,6 +138,11 @@ bool CaptureController::setupDevice(const std::wstring& deviceId) {
     
     if(!createEVR()) {
         std::wcout << L"Failed to create EVR pipeline" << std::endl;
+        return false;
+    }
+    
+    if(!createOverlayWindow()) {
+        std::wcout << L"Could not create overlay window" << std::endl;
         return false;
     }
 
@@ -522,13 +471,12 @@ bool CaptureController::createSourceReader(IMFMediaSource* pCaptureSource) {
     return success;
 }
 
-HRESULT CaptureController::updateVideoWindow() {
-    return S_OK;
-}
-
 void CaptureController::resize(int x, int y, int w, int h) {
     if(hwndVideo) {
         MoveWindow(hwndVideo, x, y, w, h, TRUE);
+        if(hwndOverlay && IsWindow(hwndOverlay)) {
+            MoveWindow(hwndOverlay, 0, 0, w, h, TRUE);
+        }
         if(pVideoDisplay) {
             RECT rc { 0, 0, w, h };
             pVideoDisplay->SetVideoPosition(NULL, &rc);
@@ -863,9 +811,6 @@ STDMETHODIMP CaptureController::OnReadSample(
             if(faceDetectionEnabled && detectionRunning) {
                 pushFrameToQueue(frame);
             }
-            if(hwndParent) {
-                InvalidateRect(hwndParent, NULL, FALSE);
-            }
 
             pBuffer->Unlock();
         }   
@@ -914,6 +859,8 @@ void CaptureController::stopDetectionThread() {
 ** Detection Worker
 */
 void CaptureController::detectionWorker() {
+    std::vector<Rect> prevFaces;
+
     while(detectionRunning) {
         std::vector<std::vector<unsigned char>> frame;
         {
@@ -935,12 +882,17 @@ void CaptureController::detectionWorker() {
         }
         if(!frame.empty()) {
             renderer.processFrameForFaces(frame);
+            std::vector<Rect> newFaces = renderer.getCurrentFaces();
             {
                 std::lock_guard<std::mutex> lock(facesMutex);
-                currentDetectedFaces = renderer.getCurrentFaces();
+                currentDetectedFaces = newFaces;
             }
-            if(hwndParent && !currentDetectedFaces.empty()) {
-                PostMessage(hwndParent, WM_UPDATE_FACES, 0, 0);
+            if(hwndParent && newFaces != prevFaces) {
+                prevFaces = newFaces;
+                updateOverlayWindow();
+                if(hwndParent) {
+                    PostMessage(hwndParent, WM_UPDATE_FACES, 0, 0);
+                }
             }
         }
     }
@@ -965,6 +917,211 @@ void CaptureController::pushFrameToQueue(const std::vector<std::vector<unsigned 
 std::vector<Rect> CaptureController::getCurrentFaces() {
     std::lock_guard<std::mutex> lock(facesMutex);
     return currentDetectedFaces;
+}
+
+/*
+** Video Window
+*/
+bool CaptureController::createVideoWindow() {
+    if(!hwndParent || !IsWindow(hwndParent)) {
+        std::wcout << L"Invalid parent window handle: " << hwndParent << std::endl;
+        return false;
+    }
+
+    static bool classRegistered = false;
+    static const wchar_t* VIDEO_WINDOW_CLASS = L"VideoWindow";
+    if(!classRegistered) {
+        WNDCLASS wc = {};
+        wc.lpfnWndProc = DefWindowProc;
+        wc.hInstance = GetModuleHandle(NULL);
+        wc.lpszClassName = VIDEO_WINDOW_CLASS;
+        wc.hbrBackground = NULL;
+        wc.style = CS_HREDRAW | CS_VREDRAW;
+        if(RegisterClass(&wc)) {
+            classRegistered = true;
+            std::wcout << L"Video window registered!" << std::endl;
+        } else {
+            std::wcout << L"Failed to register video window :(" << std::endl;
+            VIDEO_WINDOW_CLASS = L"Static";
+        }
+    }
+
+    hwndVideo = CreateWindowExW(
+        WS_EX_NOPARENTNOTIFY,
+        VIDEO_WINDOW_CLASS,
+        NULL,
+        WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
+        10, 10, 100, 100,
+        hwndParent,
+        NULL,
+        GetModuleHandle(NULL),
+        NULL
+    );
+    if(!hwndVideo) {
+        DWORD err = GetLastError();
+        std::wcout << L"CreateWindowEx failed erroor: " << err << std::endl;
+        return false;
+    }
+    SetWindowLong(
+        hwndVideo, 
+        GWL_STYLE,
+        GetWindowLong(
+            hwndVideo,
+            GWL_STYLE
+        ) & ~WS_BORDER
+    );
+
+    std::wcout << L"Video window created!: " << hwndVideo << std::endl;
+    return true;
+}
+
+HRESULT CaptureController::updateVideoWindow() {
+    return S_OK;
+}
+
+/*
+** Overlay Window
+*/
+bool CaptureController::createOverlayWindow() {
+    if(!hwndVideo || !IsWindow(hwndVideo)) {
+        std::wcout << L"Invalid video window" << std::endl;
+        return false;
+    }
+
+    static bool classRegistered = false;
+    static const wchar_t* OVERLAY_CLASS = L"OverlayWindow";
+    if(!classRegistered) {
+        WNDCLASSEXW wc = {};
+        wc.cbSize = sizeof(WNDCLASSEXW);
+        wc.lpfnWndProc = OverlayWndProc;
+        wc.hInstance = GetModuleHandle(NULL);
+        wc.lpszClassName = OVERLAY_CLASS;
+        wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
+        wc.style = CS_HREDRAW | CS_VREDRAW;
+        wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+        
+        if(!RegisterClassExW(&wc)) {
+            DWORD err = GetLastError();
+            if(err != ERROR_CLASS_ALREADY_EXISTS) {
+                std::wcout << L"Failed to register overlay class: " << err << std::endl;
+                return false;
+            }
+        }
+        classRegistered = true;
+        std::wcout << L"Overlay window class registered" << std::endl;
+    }
+
+    RECT videoRect;
+    if(!GetClientRect(hwndVideo, &videoRect)) {
+        std::wcout << L"Failed to get video client rect" << std::endl;
+        return false;
+    }
+    
+    int width = videoRect.right - videoRect.left;
+    int height = videoRect.bottom - videoRect.top;
+    if(width <= 0 || height <= 0) {
+        std::wcout << L"Video window has invalid size: " << width << L"x" << height << std::endl;
+        width = 640;
+        height = 480;
+    }
+
+    if(hwndOverlay && IsWindow(hwndOverlay)) {
+        DestroyWindow(hwndOverlay);
+        hwndOverlay = nullptr;
+    }
+
+    RECT videoScreenRect;
+    GetWindowRect(hwndVideo, &videoScreenRect);
+    SetLastError(0);
+    
+    /*
+    **
+    **
+    ** GIGANTIC DISCLAIMER!!!!!: THIS IS A TEMP SOLUTION THAT USES THE WINDOWS COORDS,
+    ** NOT THE APP COORDS, I WILL FIX THIS LATER...
+    ** to future me................... :P
+    */
+    hwndOverlay = CreateWindowExW(
+        WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE,
+        OVERLAY_CLASS,
+        NULL,
+        WS_POPUP | WS_VISIBLE,
+        videoScreenRect.left,
+        videoScreenRect.top,
+        width,
+        height,
+        hwndVideo,
+        NULL,
+        GetModuleHandle(NULL),
+        this
+    );
+    
+    if(!hwndOverlay) {
+        DWORD err = GetLastError();
+        std::wcout << L"CreateWindowEx failed!! Error: " << err << std::endl;
+        return false;
+    }
+
+    SetLayeredWindowAttributes(
+        hwndOverlay,
+        RGB(0, 0, 0),
+        255,
+        LWA_COLORKEY 
+    );
+    SetWindowPos(
+        hwndOverlay,
+        HWND_TOPMOST,
+        0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE
+    );
+    
+    std::wcout << L"Overlay window created successfully: " << hwndOverlay << std::endl;
+    
+    ShowWindow(hwndOverlay, SW_SHOW);
+    UpdateWindow(hwndOverlay);
+    updateOverlayWindow();
+    
+    return true;
+}
+
+LRESULT CALLBACK CaptureController::OverlayWndProc(
+    HWND hwnd,
+    UINT msg,
+    WPARAM wParam,
+    LPARAM lParam
+) {
+    CaptureController* pController = nullptr;
+    if(msg == WM_CREATE) {
+        CREATESTRUCT* pCreate = (CREATESTRUCT*) lParam;
+        pController = (CaptureController*)pCreate->lpCreateParams;
+        SetWindowLongPtr(hwnd, GWLP_USERDATA, (LONG_PTR)pController);
+    } else {
+        pController = (CaptureController*)GetWindowLongPtr(hwnd, GWLP_USERDATA);
+    }
+
+    switch(msg) {
+        case WM_PAINT:
+            if(pController) {
+                PAINTSTRUCT ps;
+                HDC hdc = BeginPaint(hwnd, &ps);
+
+                auto faces = pController->getCurrentFaces();
+                pController->getRenderer().draw(hdc, faces);
+                EndPaint(hwnd, &ps);
+            }
+            return 0;
+        case WM_ERASEBKGND:
+            return 1;
+        default:
+            return DefWindowProc(hwnd, msg, wParam, lParam);
+    }
+}
+
+void CaptureController::updateOverlayWindow() {
+    if(hwndOverlay && IsWindow(hwndOverlay)) {
+        InvalidateRect(hwndOverlay, NULL, TRUE);
+        UpdateWindow(hwndOverlay);
+    }
 }
 
 void CaptureController::cleanup() {
@@ -1002,5 +1159,9 @@ void CaptureController::cleanup() {
     if(hwndVideo) {
         DestroyWindow(hwndVideo);
         hwndVideo = nullptr;
+    }
+    if(hwndOverlay) {
+        DestroyWindow(hwndOverlay);
+        hwndOverlay = nullptr;
     }
 }

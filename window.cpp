@@ -31,7 +31,7 @@ LRESULT CALLBACK Window::WindowProc(
                     640,
                     460
                 )) {
-                    MessageBox(hwnd, L"Failed to init cam", L"Camera Error", MB_OK | MB_ICONERROR);
+                    MessageBox(hwnd, L"Failed to init capturecontroller", L"Camera Error", MB_OK | MB_ICONERROR);
                 } else {
                     std::wcout << L"Capture controller success!" << std::endl;
                     pWindow->captureController.enableFaceDetection(true);
@@ -54,8 +54,24 @@ LRESULT CALLBACK Window::WindowProc(
             case WM_ERASEBKGND:
                 return 1;
             case WM_UPDATE_FACES:
-                faces = pWindow->captureController.getCurrentFaces();
-                InvalidateRect(hwnd, NULL, FALSE);
+                if(pWindow->captureController.getVideoWindow()) {
+                    RECT videoRect;
+                    if(GetWindowRect(pWindow->captureController.getVideoWindow(), &videoRect)) {
+                        POINT topLeft = { videoRect.left, videoRect.top };
+                        POINT bottomRight = { videoRect.right, videoRect.bottom };
+                        ScreenToClient(hwnd, &topLeft);
+                        ScreenToClient(hwnd, &bottomRight);
+
+                        RECT faceArea = {
+                            topLeft.x - 50, 
+                            topLeft.y - 50, 
+                            bottomRight.x + 50, 
+                            bottomRight.y + 50
+                        };
+                        InvalidateRect(hwnd, &faceArea, FALSE);
+                    }
+                }
+                pWindow->captureController.updateOverlayWindow();
                 break;
             case WM_PAINT:
                 {
@@ -68,39 +84,11 @@ LRESULT CALLBACK Window::WindowProc(
                     FillRect(hdc, &clientRect, bgBrush);
                     DeleteObject(bgBrush);
 
-                    HWND hwndVideo = pWindow->captureController.getVideoWindow();
-                    if(hwndVideo && IsWindow(hwndVideo)) {
-                        RECT videoRect;
-                        if(GetWindowRect(hwndVideo, &videoRect)) {
-                            POINT topLeft = { videoRect.left, videoRect.top };
-                            POINT bottomRight = { videoRect.right, videoRect.bottom };
-                            ScreenToClient(hwnd, &topLeft);
-                            ScreenToClient(hwnd, &bottomRight);
-
-                            RECT borderRect = {
-                                topLeft.x - 2,
-                                topLeft.y - 2,
-                                bottomRight.x + 2,
-                                bottomRight.y + 2
-                            };
-                            HBRUSH borderBrush = CreateSolidBrush(RGB(0, 200, 0));
-                            FrameRect(hdc, &borderRect, borderBrush);
-                            DeleteObject(borderBrush);
-                        }
-                    }
-
-                    faces = pWindow->captureController.getCurrentFaces();
-                    pWindow->captureController.getRenderer().draw(hdc);
-
                     RECT rect = { 550, 10, 800, 30 };
-                    DrawText(
-                        hdc,
-                        L"Camvalley ULTRA ALPHA BUILD!",
-                        -1,
-                        &rect,
-                        DT_LEFT
-                    );
+                    DrawText(hdc, L"Camvalley ULTRA ALPHA BUILD!", -1, &rect, DT_LEFT);
+                    
                     RECT faceRect = { 550, 40, 800, 70 };
+                    auto faces = pWindow->captureController.getCurrentFaces();
                     std::wstring faceText = L"Faces detected: " + std::to_wstring(faces.size());
                     DrawText(hdc, faceText.c_str(), -1, &faceRect, DT_LEFT);
 

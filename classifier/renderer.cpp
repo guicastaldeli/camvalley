@@ -67,19 +67,20 @@ void Renderer::processFrameForFaces(const std::vector<std::vector<unsigned char>
 /*
 ** Draw
 */
-void Renderer::draw(HDC hdc) {
-    if(currentFaces.empty()) {
+void Renderer::draw(HDC hdc, const std::vector<Rect>& faces) {
+    if(faces.empty()) {
         std::wcout << "Empty!!" << std::endl;
         return;
     }
 
-    static HPEN redPen = CreatePen(PS_SOLID, 3, RGB(0, 0, 255));
+    static HPEN redPen = CreatePen(PS_SOLID, 3, RGB(255, 0, 0));
     static HBRUSH nullBrush = (HBRUSH)GetStockObject(NULL_BRUSH);
 
     HPEN oldPen = (HPEN)SelectObject(hdc, redPen);
     HBRUSH oldBrush = (HBRUSH)SelectObject(hdc, nullBrush);
+    int oldBkMode = SetBkMode(hdc, TRANSPARENT);
 
-    for(const auto& face : currentFaces) {
+    for(const auto& face : faces) {
         Rectangle(
             hdc,
             face.x,
@@ -88,6 +89,7 @@ void Renderer::draw(HDC hdc) {
             face.y + face.height
         );
     }
+    SetBkMode(hdc, oldBkMode);
     SelectObject(hdc, oldPen);
     SelectObject(hdc, oldBrush);
 }

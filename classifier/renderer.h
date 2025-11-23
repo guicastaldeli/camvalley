@@ -15,7 +15,7 @@ class Renderer {
 
         bool load(const std::string& fileName);
         void processFrameForFaces(const std::vector<std::vector<unsigned char>>& frame);
-        void draw(HDC hdc);
+        void draw(HDC hdc, const std::vector<Rect>& faces);
 
         void forceEnable();
         bool isCascadeLoaded() const {

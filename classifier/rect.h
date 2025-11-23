@@ -15,4 +15,15 @@ class Rect {
         y(y),
         width(w),
         height(h) {}
+
+        bool operator==(const Rect& other) const {
+            return x == other.x &&
+                y == other.y &&
+                width == other.width &&
+                height == other.height;
+        }
+
+        bool operator!=(const Rect& other) const {
+            return !(*this == other);
+        }
 };

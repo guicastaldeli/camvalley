@@ -32,6 +32,7 @@ class CaptureController : public IMFSourceReaderCallback {
         UINT32 deviceCount;
         HWND hwndParent;
         HWND hwndVideo;
+        HWND hwndOverlay;
 
         std::wstring currentDeviceId;
         DeviceController deviceController;
@@ -53,6 +54,14 @@ class CaptureController : public IMFSourceReaderCallback {
         std::mutex facesMutex;
 
         bool createVideoWindow();
+        bool createOverlayWindow();
+        static LRESULT CALLBACK OverlayWndProc(
+            HWND hwnd,
+            UINT msg,
+            WPARAM wParam,
+            LPARAM lParam
+        );
+
         bool setupDevice(const std::wstring& deviceId);
         bool createSourceReader(IMFMediaSource* pCaptureSource);
         bool createEVR();
@@ -96,6 +105,7 @@ class CaptureController : public IMFSourceReaderCallback {
         HWND getVideoWindow() const { 
             return hwndVideo; 
         }
+        void updateOverlayWindow();
         std::wstring getCurrentDeviceId() const {
             return currentDeviceId;
         }
