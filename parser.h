@@ -1,6 +1,7 @@
 #pragma once
 #include "classifier/classifier.h"
 #include "classifier/haar_cascade.h"
+#include "classifier/feature.h"
 #include <string>
 #include <vector>
 #include <fstream>
@@ -36,4 +37,5 @@ class Parser {
             const std::string& line,
             const std::string& tag
         );
+        static Feature createFeatureFromIndex(int featureIndex);
 };

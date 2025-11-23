@@ -11,6 +11,8 @@
 #pragma comment(lib, "ole32.lib")
 #include "controller/capture_controller.h"
 
+#define WM_UPDATE_FACES (WM_USER + 100)
+
 class Window {
     private:
         WNDCLASS wc;

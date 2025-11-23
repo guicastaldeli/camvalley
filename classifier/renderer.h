@@ -3,11 +3,13 @@
 #include <windows.h>
 #include <thread>
 #include <iostream>
+#include <mutex>
 
 class Renderer {
     public:
         HaarCascade faceCascade;
         std::vector<Rect> currentFaces;
+        std::mutex facesMutex;
         bool faceDetectionEnabled;
         bool cascadeLoaded;
 
@@ -25,6 +27,7 @@ class Renderer {
         HaarCascade& getFaceCascade() {
             return faceCascade;
         }
+        std::vector<Rect> getCurrentFaces();
         std::vector<std::vector<float>> createIntegralImage(
             const std::vector<std::vector<unsigned char>>& image
         );

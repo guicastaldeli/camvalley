@@ -21,6 +21,7 @@ LRESULT CALLBACK Window::WindowProc(
         pWindow = (Window*)GetWindowLongPtr(hwnd, GWLP_USERDATA);
     }
     if(pWindow) {
+        auto faces = pWindow->captureController.getCurrentFaces();
         switch(msg) {
             case WM_CREATE:
                 if(!pWindow->captureController.init(
@@ -52,6 +53,10 @@ LRESULT CALLBACK Window::WindowProc(
                 return 0;
             case WM_ERASEBKGND:
                 return 1;
+            case WM_UPDATE_FACES:
+                faces = pWindow->captureController.getCurrentFaces();
+                InvalidateRect(hwnd, NULL, FALSE);
+                break;
             case WM_PAINT:
                 {
                     PAINTSTRUCT ps;
@@ -84,6 +89,7 @@ LRESULT CALLBACK Window::WindowProc(
                         }
                     }
 
+                    faces = pWindow->captureController.getCurrentFaces();
                     pWindow->captureController.getRenderer().draw(hdc);
 
                     RECT rect = { 550, 10, 800, 30 };
@@ -94,6 +100,9 @@ LRESULT CALLBACK Window::WindowProc(
                         &rect,
                         DT_LEFT
                     );
+                    RECT faceRect = { 550, 40, 800, 70 };
+                    std::wstring faceText = L"Faces detected: " + std::to_wstring(faces.size());
+                    DrawText(hdc, faceText.c_str(), -1, &faceRect, DT_LEFT);
 
                     EndPaint(hwnd, &ps);
                 }

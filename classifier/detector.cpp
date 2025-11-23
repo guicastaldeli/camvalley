@@ -1,5 +1,6 @@
 #include <cmath>
 #include <algorithm>
+#include <iostream>
 #include "haar_cascade.h"
 #include "feature.h"
 #include "classifier.h"
@@ -166,22 +167,17 @@ bool WeakClassifier::classify(
     int y,
     float scale
 ) const {
-    float featureValue = calcFeatureValue(
-        feature,
-        integral,
-        x,
-        y,
-        scale
-    );
-    if(feature.leftRight) {
-        return featureValue * 
-            feature.leftVal < feature.threshold * 
-            feature.rightVal;
-    } else {
-        return featureValue *
-            feature.leftVal > feature.threshold *
-            feature.rightVal;
+    float featureValue = calcFeatureValue(feature, integral, x, y, scale);
+    static int debugCount = 0;
+    if (debugCount < 5) {
+        std::wcout << L"WeakClassifier[" << debugCount << "]: featureValue=" << featureValue 
+                   << L", threshold=" << feature.threshold 
+                   << L", leftVal=" << feature.leftVal 
+                   << L", rightVal=" << feature.rightVal 
+                   << L", leftRight=" << feature.leftRight << std::endl;
+        debugCount++;
     }
+    return featureValue < feature.threshold;
 }
 
 bool StrongClassifier::classify(
@@ -190,21 +186,32 @@ bool StrongClassifier::classify(
     int y,
     float scale
 ) const {
-    // Debug: print first few calls
-    static int callCount = 0;
-    if (callCount < 5) {
-        std::wcout << L"StrongClassifier::classify called at (" << x << "," << y << ") with " 
-                   << weakClassifiers.size() << " weak classifiers" << std::endl;
-        callCount++;
+    if (weakClassifiers.empty()) {
+        return false;
     }
     
-    float sum = 0;
+    float sum = 0.0f;
+    int passedCount = 0;
+    
     for(const auto& wc : weakClassifiers) {
         if(wc.classify(integral, x, y, scale)) {
-            sum += wc.weight;
+            sum += wc.weight * wc.feature.leftVal;
+            passedCount++;
+        } else {
+            sum += wc.weight * wc.feature.rightVal;
         }
     }
-    return sum >= threshold;
+    
+    bool result = (sum >= threshold);
+    static int strongDebugCount = 0;
+    if (strongDebugCount < 5) {
+        std::wcout << L"StrongClassifier[" << strongDebugCount << "]: " << passedCount << L"/" << weakClassifiers.size() 
+                   << L" weak classifiers passed, sum=" << sum << L", threshold=" << threshold 
+                   << L", result=" << result << std::endl;
+        strongDebugCount++;
+    }
+    
+    return result;
 }
 
 std::vector<Rect> HaarCascade::nonMaximumSuppression(
@@ -212,7 +219,6 @@ std::vector<Rect> HaarCascade::nonMaximumSuppression(
     float overlapThreshold
 ) {
     if(faces.empty()) {
-        std::wcout << "Faces empty!" << std::endl;
         return faces;
     }
 
@@ -268,7 +274,7 @@ std::vector<Rect> HaarCascade::nonMaximumSuppression(
         } 
     }
 
-    std::wcout << L"Non-maximum suppression: " << filteredFaces.size() << L" -> " << res.size() << L" faces" << std::endl;
+    std::wcout << L"Nonmaximum suppression: " << filteredFaces.size() << L" -> " << res.size() << L" faces" << std::endl;
     return res;
 }
 
@@ -286,12 +292,21 @@ std::vector<Rect> HaarCascade::detectFaces(
         std::wcout << L"HaarCascade empty integral img" << std::endl;
         return faces;
     }
+    if(stages.empty()) {
+        std::wcout << L"No stages in cascade!" << std::endl;
+        return faces;
+    }
+    if(stages[0].weakClassifiers.empty()) {
+        std::wcout << L"First stage has no weak classifiers!" << std::endl;
+        return faces;
+    }
 
     int width = integral[0].size();
     int height = integral.size();
 
     std::wcout << L"Detecting faces in " << width << "x" << height 
                << " image with " << stages.size() << " stages" << std::endl;
+    std::wcout << L"First stage has " << stages[0].weakClassifiers.size() << " weak classifiers" << std::endl;
 
     if(maxSize > width || maxSize > height) {
         maxSize = std::min(width, height);

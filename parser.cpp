@@ -16,22 +16,46 @@ bool Parser::parseStage(
 ) {
     std::string line;
     std::vector<WeakClassifier> wc;
+    bool inThisStage = false;
+
+    std::wcout << L"  parseStage: Starting to parse stage..." << std::endl;
 
     while(std::getline(file, line)) {
         std::string trimmed = trim(line);
+        
+        if(trimmed.find("<_>") != std::string::npos) {
+            inThisStage = true;
+            std::wcout << L"  parseStage: Found stage start" << std::endl;
+            continue;
+        }
+        
+        if(!inThisStage) continue;
+
         if(trimmed.find("<stageThreshold>") != std::string::npos) {
             stageThreshold = std::stof(getTagContent(trimmed, "stageThreshold"));
-        } else if(trimmed.find("<trees>") != std::string::npos) {
+            std::wcout << L"  parseStage: Found stageThreshold: " << stageThreshold << std::endl;
+        } else if(trimmed.find("<weakClassifiers>") != std::string::npos) {
+            std::wcout << L"  parseStage: Found <weakClassifiers> - calling parseTree..." << std::endl;
             if(!parseTree(file, wc)) {
+                std::wcout << L"  parseStage: parseTree failed" << std::endl;
                 return false;
             }
-        } else if(trimmed.find("</stage>") != std::string::npos) {
+            std::wcout << L"  parseStage: parseTree completed, got " << wc.size() << L" weak classifiers" << std::endl;
+        } else if(trimmed.find("</_>") != std::string::npos) {
+            std::wcout << L"  parseStage: Found stage end" << std::endl;
+            break;
+        } else if(trimmed.find("</stages>") != std::string::npos) {
+            std::wcout << L"  parseStage: Unexpected end of stages section" << std::endl;
             break;
         }
     }
 
-    for(auto& w : wc) stage.addClassifier(w);
-    return true;
+    for(auto& w : wc) {
+        stage.addClassifier(w);
+    }
+    
+    std::wcout << L"  parseStage: Completed with " << wc.size() << L" weak classifiers" << std::endl;
+    return !wc.empty();
 }
 
 /*
@@ -42,19 +66,36 @@ bool Parser::parseTree(
     std::vector<WeakClassifier>& wcs
 ) {
     std::string line;
+    int treeCount = 0;
+    
+    std::wcout << L"  parseTree: Starting to parse trees..." << std::endl;
+
     while(std::getline(file, line)) {
         std::string trimmed = trim(line);
-        if(trimmed.find("</trees>") != std::string::npos) {
+        
+        std::wcout << L"  parseTree line: " << trimmed.c_str() << std::endl;
+
+        if(trimmed.find("</weakClassifiers>") != std::string::npos) {
+            std::wcout << L"  parseTree: End of weakClassifiers section" << std::endl;
             break;
-        } else if(trimmed.find("<_>") != std::string::npos) {
-            Feature dfFeature;
-            WeakClassifier wc(dfFeature, 0.0f, 0.0f);
+        } 
+        else if(trimmed.find("<_>") != std::string::npos) {
+            treeCount++;
+            std::wcout << L"  parseTree: Found weak classifier #" << treeCount << std::endl;
+            
+            Feature feature;
+            WeakClassifier wc(feature, 0.0f, 1.0f);
+            
             if(parseNode(file, wc)) {
                 wcs.push_back(wc);
+                std::wcout << L"  parseTree: SUCCESS - added weak classifier " << treeCount << std::endl;
+            } else {
+                std::wcout << L"  parseTree: FAILED - could not parse weak classifier " << treeCount << std::endl;
             }
         }
     }
 
+    std::wcout << L"  parseTree: Completed with " << wcs.size() << L" weak classifiers" << std::endl;
     return true;
 }
 
@@ -67,45 +108,106 @@ bool Parser::parseNode(
 ) {
     std::string line;
     Feature feature;
-    float threshold = 0;;
+    float threshold = 0;
     float leftVal = 0;
     float rightVal = 0;
-    bool hasLeftVal = false;
-    bool hasRightVal = false;
-    std::vector<std::string> rectsData;
+    
+    std::wcout << L"    parseNode: Starting OpenCV format parsing..." << std::endl;
 
     while(std::getline(file, line)) {
         std::string trimmed = trim(line);
-        if(trimmed.find("<threshold>") != std::string::npos) {
-            threshold = std::stof(getTagContent(trimmed, "threshold"));
-        } else if(trimmed.find("<left_val>") != std::string::npos) {
-            leftVal = std::stof(getTagContent(trimmed, "left_val"));
-            hasLeftVal = true;
-        } else if(trimmed.find("<right_val>") != std::string::npos) {
-            rightVal = std::stof(getTagContent(trimmed, "right_val"));
-            hasRightVal = true;
-        } else if(trimmed.find("<rects>") != std::string::npos) {
-            while(std::getline(file, line)) {
-                std::string rectLine = trim(line);
-                if(rectLine.find("</rects>") != std::string::npos) break;
-                if(rectLine.find("_") != std::string::npos) {
-                    rectsData.push_back(rectLine);
+        
+        std::wcout << L"    parseNode line: " << trimmed.c_str() << std::endl;
+
+        if(trimmed.find("<internalNodes>") != std::string::npos) {
+            if(std::getline(file, line)) {
+                std::string dataLine = trim(line);
+                std::wcout << L"    internalNodes data: " << dataLine.c_str() << std::endl;
+                size_t closePos = dataLine.find("</internalNodes>");
+                if(closePos != std::string::npos) {
+                    std::string nodesContent = dataLine.substr(0, closePos);
+                    std::wcout << L"    Found internalNodes content: " << nodesContent.c_str() << std::endl;
+                    auto parts = split(nodesContent, ' ');
+                    if(parts.size() >= 4) {
+                        int featureIndex = std::stoi(parts[2]);
+                        threshold = std::stof(parts[3]);
+                        feature = createFeatureFromIndex(featureIndex);
+                        std::wcout << L"    Parsed - featureIndex: " << featureIndex 
+                                  << L", threshold: " << threshold << std::endl;
+                    }
                 }
             }
-        } else if(trimmed.find("</_>") != std::string::npos) {
+        }
+        else if(trimmed.find("<leafValues>") != std::string::npos) {
+            if(std::getline(file, line)) {
+                std::string dataLine = trim(line);
+                std::wcout << L"    leafValues data: " << dataLine.c_str() << std::endl;
+                size_t closePos = dataLine.find("</leafValues>");
+                if(closePos != std::string::npos) {
+                    std::string leafContent = dataLine.substr(0, closePos);
+                    std::wcout << L"    Found leafValues content: " << leafContent.c_str() << std::endl;
+                    
+                    auto parts = split(leafContent, ' ');
+                    if(parts.size() >= 2) {
+                        leftVal = std::stof(parts[0]);
+                        rightVal = std::stof(parts[1]);
+                        std::wcout << L"    Parsed - leftVal: " << leftVal 
+                                  << L", rightVal: " << rightVal << std::endl;
+                    }
+                }
+            }
+        }
+        else if(trimmed.find("</_>") != std::string::npos) {
+            std::wcout << L"    End of node" << std::endl;
             break;
         }
     }
-    if(!rectsData.empty()) {
-        feature = parseFeature(rectsData);
-        wc = WeakClassifier(feature, 0.3f, 1.0f);
+    if(threshold != 0) {
+        wc = WeakClassifier(feature, 0.0f, 1.0f);
         wc.feature.threshold = threshold;
-        wc.feature.leftVal = hasLeftVal ? leftVal : -1.0f;
-        wc.feature.rightVal = hasRightVal ? rightVal : 1.0f;
+        wc.feature.leftVal = leftVal;
+        wc.feature.rightVal = rightVal;
+        wc.feature.leftRight = true;
+        
+        std::wcout << L"    SUCCESS: Created weak classifier with threshold=" 
+                  << threshold << L", leftVal=" << leftVal << L", rightVal=" << rightVal << std::endl;
         return true;
     }
 
+    std::wcout << L"    FAILED: Could not parse node data" << std::endl;
     return false;
+}
+
+Feature Parser::createFeatureFromIndex(int featureIndex) {
+    Feature feature;
+    switch(featureIndex % 5) {
+        case 0: 
+            feature.type = Feature::TWO_HORIZONTAL;
+            feature.x = 1; feature.y = 1; feature.width = 16; feature.height = 8;
+            break;
+        case 1:
+            feature.type = Feature::TWO_VERTICAL;
+            feature.x = 1; feature.y = 1; feature.width = 8; feature.height = 16;
+            break;
+        case 2:
+            feature.type = Feature::THREE_HORIZONTAL;
+            feature.x = 1; feature.y = 1; feature.width = 18; feature.height = 6;
+            break;
+        case 3:
+            feature.type = Feature::THREE_VERTICAL;
+            feature.x = 1; feature.y = 1; feature.width = 6; feature.height = 18;
+            break;
+        case 4:
+            feature.type = Feature::FOUR_SQUARE;
+            feature.x = 1; feature.y = 1; feature.width = 12; feature.height = 12;
+            break;
+    }
+    
+    std::wcout << L"    Created feature: type=" << feature.type 
+              << L", x=" << feature.x << L", y=" << feature.y
+              << L", width=" << feature.width << L", height=" << feature.height << std::endl;
+    
+    return feature;
 }
 
 /*

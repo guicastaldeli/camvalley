@@ -2,6 +2,7 @@
 #pragma comment(lib, "strmiids.lib")
 #pragma comment(lib, "dxva2.lib")
 #include "capture_controller.h"
+#include "../window.h"
 #include <iostream>
 #include <evr.h>
 #include <d3d9.h>
@@ -237,6 +238,8 @@ bool CaptureController::setupDevice(const std::wstring& deviceId) {
         return false;
     }
     pCaptureSource->Release();
+
+    if(faceDetectionEnabled) startDetectionThread();
     return true;
 }
 
@@ -623,10 +626,15 @@ HRESULT CaptureController::configFormat(IMFMediaTypeHandler* pHandler) {
 */
 void CaptureController::enableFaceDetection(bool enable) {
     faceDetectionEnabled = enable;
-    if(enable && !renderer.isCascadeLoaded()) {
-        std::wcout << L"Loading cascade..." << std::endl;
-        loadCascade("../.data/haarcascade_frontalface_default.xml");
-        renderer.forceEnable();
+    if(enable) {
+        if(!renderer.isCascadeLoaded()) {
+            std::wcout << L"Loading cascade..." << std::endl;
+            loadCascade("../.data/haarcascade_frontalface_default.xml");
+            renderer.forceEnable();
+        }
+        startDetectionThread();
+    } else {
+        std::wcout << "Enable face detection FATAL ERR." << std::endl;
     }
 }
 
@@ -729,9 +737,7 @@ void CaptureController::getCurrentFrame(std::vector<std::vector<unsigned char>>&
 std::vector<std::vector<unsigned char>> CaptureController::convertFrameToGrayscale(
     BYTE* pData,
     DWORD length
-) {
-    std::wcout << L"TESTSTTSTSTSTTSTS" << std::endl;
-    
+) {    
     IMFMediaType* pType = nullptr;
     UINT32 width = 0;
     UINT32 height = 0;
@@ -789,7 +795,6 @@ std::vector<std::vector<unsigned char>> CaptureController::convertFrameToGraysca
 ** Query Interface
 */
 STDMETHODIMP CaptureController::QueryInterface(REFIID riid, void** ppv) {
-    std::wcout << "query interface !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" << std::endl;
     static const QITAB qit[] = {
         QITABENT(
             CaptureController,
@@ -855,11 +860,13 @@ STDMETHODIMP CaptureController::OnReadSample(
             frameReady = true;
             LeaveCriticalSection(&frameCriticalSection);
 
-            renderer.processFrameForFaces(frame);
+            if(faceDetectionEnabled && detectionRunning) {
+                pushFrameToQueue(frame);
+            }
             if(hwndParent) {
                 InvalidateRect(hwndParent, NULL, FALSE);
-                UpdateWindow(hwndParent);
             }
+
             pBuffer->Unlock();
         }   
         pBuffer->Release();
@@ -886,8 +893,83 @@ STDMETHODIMP CaptureController::OnFlush(DWORD dwStreamIndex) {
     return S_OK;
 }
 
+/*
+** Detection Thread
+*/
+void CaptureController::startDetectionThread() {
+    if(detectionRunning) return;
+    detectionRunning = true;
+    detectionThread = std::thread(&CaptureController::detectionWorker, this);
+    std::wcout << L"Face detection thread started" << std::endl;
+}
+
+void CaptureController::stopDetectionThread() {
+    detectionRunning = false;
+    queueCondition.notify_all();
+    if(detectionThread.joinable()) detectionThread.join();
+    std::wcout << L"Face detection thread stopped" << std::endl;
+}
+
+/*
+** Detection Worker
+*/
+void CaptureController::detectionWorker() {
+    while(detectionRunning) {
+        std::vector<std::vector<unsigned char>> frame;
+        {
+            std::unique_lock<std::mutex> lock(queueMutex);
+            queueCondition.wait_for(
+                lock,
+                std::chrono::milliseconds(100),
+                [this]() {
+                    return 
+                        !frameQueue.empty() ||
+                        !detectionRunning; 
+                }
+            );
+            if(!detectionRunning) return;
+            if(!frameQueue.empty()) {
+                frame = frameQueue.front();
+                frameQueue.pop();
+            }
+        }
+        if(!frame.empty()) {
+            renderer.processFrameForFaces(frame);
+            {
+                std::lock_guard<std::mutex> lock(facesMutex);
+                currentDetectedFaces = renderer.getCurrentFaces();
+            }
+            if(hwndParent && !currentDetectedFaces.empty()) {
+                PostMessage(hwndParent, WM_UPDATE_FACES, 0, 0);
+            }
+        }
+    }
+}
+
+/*
+** Push frame to Queue
+*/
+void CaptureController::pushFrameToQueue(const std::vector<std::vector<unsigned char>>& frame) {
+    if(!detectionRunning || !faceDetectionEnabled) return;
+    {
+        std::lock_guard<std::mutex> lock(queueMutex);
+        if(frameQueue.size() > 5) frameQueue.pop();
+        frameQueue.push(frame);
+    }
+    queueCondition.notify_one();
+}
+
+/*
+** Get Current Faces
+*/
+std::vector<Rect> CaptureController::getCurrentFaces() {
+    std::lock_guard<std::mutex> lock(facesMutex);
+    return currentDetectedFaces;
+}
+
 void CaptureController::cleanup() {
     isRunning = false;
+    stopDetectionThread();
 
     if(pSession) {
         pSession->Stop();

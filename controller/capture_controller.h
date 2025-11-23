@@ -14,6 +14,10 @@
 #include <evr.h>
 #include <string>
 #include <vector>
+#include <queue>
+#include <mutex>
+#include <atomic>
+#include <condition_variable> 
 #include "device_controller.h"
 #include "classifier/renderer.h"
 
@@ -39,6 +43,14 @@ class CaptureController : public IMFSourceReaderCallback {
         CRITICAL_SECTION frameCriticalSection;
         std::vector<std::vector<unsigned char>> currentFrame;
         bool frameReady;
+        
+        std::thread detectionThread;
+        std::atomic<bool> detectionRunning{false};
+        std::queue<std::vector<std::vector<unsigned char>>> frameQueue;
+        std::mutex queueMutex;
+        std::condition_variable queueCondition;
+        std::vector<Rect> currentDetectedFaces;
+        std::mutex facesMutex;
 
         bool createVideoWindow();
         bool setupDevice(const std::wstring& deviceId);
@@ -109,4 +121,10 @@ class CaptureController : public IMFSourceReaderCallback {
             IMFMediaEvent* pEvent
         );
         STDMETHODIMP OnFlush(DWORD dwStreamIndex);
+
+        void startDetectionThread();
+        void stopDetectionThread();
+        void detectionWorker();
+        void pushFrameToQueue(const std::vector<std::vector<unsigned char>>& frame);
+        std::vector<Rect> getCurrentFaces();
 };

@@ -6,18 +6,6 @@
 bool Renderer::load(const std::string& fileName) {
     Loader loader;
     cascadeLoaded = loader.loadFile(fileName, faceCascade);
-    
-    std::wcout << L"Renderer::load: cascadeLoaded = " << cascadeLoaded << std::endl;
-    std::wcout << L"Renderer::load: faceCascade.isLoaded() = " << faceCascade.isLoaded() << std::endl;
-    std::wcout << L"Renderer::load: faceCascade.stages.size() = " << faceCascade.stages.size() << std::endl;
-    
-    if (cascadeLoaded && faceCascade.isLoaded()) {
-        std::wcout << L"Renderer: Cascade loaded successfully with " 
-                   << faceCascade.stages.size() << L" stages" << std::endl;
-    } else {
-        std::wcout << L"Renderer: Failed to load cascade or cascade not properly initialized" << std::endl;
-    }
-    
     return cascadeLoaded && faceCascade.isLoaded();
 }
 
@@ -64,14 +52,16 @@ void Renderer::processFrameForFaces(const std::vector<std::vector<unsigned char>
     if(elapsed.count() < 66) return;
     lastProcessTime = currentTime;
 
-    static int frameCount = 0;
-    frameCount++;
     if(!faceDetectionEnabled || !isCascadeLoaded()) return;
     if(frame.empty() || frame[0].empty()) return;
 
     auto integral = createIntegralImage(frame);
     if(integral.empty()) return;
-    currentFaces = faceCascade.detectFaces(integral);
+    auto newFaces = faceCascade.detectFaces(integral);
+    {
+        std::lock_guard<std::mutex> lock(facesMutex);
+        currentFaces = newFaces;
+    }
 }
 
 /*
@@ -100,4 +90,9 @@ void Renderer::draw(HDC hdc) {
     }
     SelectObject(hdc, oldPen);
     SelectObject(hdc, oldBrush);
+}
+
+std::vector<Rect> Renderer::getCurrentFaces() {
+    std::lock_guard<std::mutex> lock(facesMutex);
+    return currentFaces;
 }
