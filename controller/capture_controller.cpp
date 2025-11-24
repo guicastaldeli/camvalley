@@ -996,7 +996,7 @@ bool CaptureController::createOverlayWindow() {
         wc.lpfnWndProc = OverlayWndProc;
         wc.hInstance = GetModuleHandle(NULL);
         wc.lpszClassName = OVERLAY_CLASS;
-        wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
+        wc.hbrBackground = (HBRUSH)GetStockObject(NULL_BRUSH);
         wc.style = CS_HREDRAW | CS_VREDRAW;
         wc.hCursor = LoadCursor(NULL, IDC_ARROW);
         
@@ -1034,40 +1034,24 @@ bool CaptureController::createOverlayWindow() {
     GetWindowRect(hwndVideo, &videoScreenRect);
     SetLastError(0);
     
-    /*
-    **
-    **
-    ** GIGANTIC DISCLAIMER!!!!!: THIS IS A TEMP SOLUTION THAT USES THE WINDOWS COORDS,
-    ** NOT THE APP COORDS, I WILL FIX THIS LATER...
-    ** to future me................... :P
-    */
     hwndOverlay = CreateWindowExW(
-        WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE,
+        WS_EX_TRANSPARENT | WS_EX_NOACTIVATE,
         OVERLAY_CLASS,
         NULL,
-        WS_POPUP | WS_VISIBLE,
-        videoScreenRect.left,
-        videoScreenRect.top,
-        width,
-        height,
-        hwndVideo,
+        WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
+        0, 0,
+        width, height,
+        hwndParent,
         NULL,
         GetModuleHandle(NULL),
         this
-    );
-    
+    );    
     if(!hwndOverlay) {
         DWORD err = GetLastError();
         std::wcout << L"CreateWindowEx failed!! Error: " << err << std::endl;
         return false;
     }
 
-    SetLayeredWindowAttributes(
-        hwndOverlay,
-        RGB(0, 0, 0),
-        255,
-        LWA_COLORKEY 
-    );
     SetWindowPos(
         hwndOverlay,
         HWND_TOPMOST,
