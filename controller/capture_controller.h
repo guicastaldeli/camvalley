@@ -19,10 +19,15 @@
 #include <atomic>
 #include <condition_variable> 
 #include "device_controller.h"
-#include "classifier/renderer.h"
+#include "../classifier/renderer.h"
+#include "../window_manager.h"
 
 class CaptureController : public IMFSourceReaderCallback {
-    private:
+    public:
+        std::wstring currentDeviceId;
+        WindowManager& windowManager;
+        DeviceController deviceController;
+
         ULONG m_cRef;
         IMFMediaSource* pVideoSource;
         IMFSourceReader* pReader;
@@ -30,20 +35,13 @@ class CaptureController : public IMFSourceReaderCallback {
         IMFMediaSession* pSession;
         IMFVideoDisplayControl* pVideoDisplay;
         UINT32 deviceCount;
-        HWND hwndParent;
-        HWND hwndVideo;
-        HWND hwndOverlay;
-
-        std::wstring currentDeviceId;
-        DeviceController deviceController;
-        bool isRunning;
 
         Renderer renderer;
-        bool faceDetectionEnabled;
-
         CRITICAL_SECTION frameCriticalSection;
         std::vector<std::vector<unsigned char>> currentFrame;
         bool frameReady;
+        bool faceDetectionEnabled;
+        bool isRunning;
         
         std::thread detectionThread;
         std::atomic<bool> detectionRunning{false};
@@ -53,27 +51,15 @@ class CaptureController : public IMFSourceReaderCallback {
         std::vector<Rect> currentDetectedFaces;
         std::mutex facesMutex;
 
-        bool createVideoWindow();
-        bool createOverlayWindow();
-        static LRESULT CALLBACK OverlayWndProc(
-            HWND hwnd,
-            UINT msg,
-            WPARAM wParam,
-            LPARAM lParam
-        );
-
         bool setupDevice(const std::wstring& deviceId);
         bool createSourceReader(IMFMediaSource* pCaptureSource);
         bool createEVR();
-        HRESULT updateVideoWindow();
         HRESULT configFormat(IMFMediaTypeHandler* pHandler);
 
-    public:
-        CaptureController();
+        CaptureController(WindowManager& wm);
         ~CaptureController();
 
         bool init(
-            HWND parent,
             int x,
             int y,
             int w,
@@ -87,7 +73,6 @@ class CaptureController : public IMFSourceReaderCallback {
             int w,
             int h
         );
-        void resize(int x, int y, int w, int h);
         bool refreshDevices();
         IDevice* getCurrentDevice() const;
 
@@ -102,10 +87,6 @@ class CaptureController : public IMFSourceReaderCallback {
         bool isCapturing() const {
             return isRunning;
         }
-        HWND getVideoWindow() const { 
-            return hwndVideo; 
-        }
-        void updateOverlayWindow();
         std::wstring getCurrentDeviceId() const {
             return currentDeviceId;
         }

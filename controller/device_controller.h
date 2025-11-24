@@ -5,8 +5,8 @@
 #include <vector>
 #include <string>
 #include <memory>
-#include "device/device_list.h"
-#include "device/device_interface.h"
+#include "../device/device_list.h"
+#include "../device/device_interface.h"
 
 class DeviceController {
     private:
