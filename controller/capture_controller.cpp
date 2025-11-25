@@ -19,7 +19,8 @@ CaptureController::CaptureController(WindowManager& wm) :
     isRunning(false),
     faceDetectionEnabled(true),
     renderer(),
-    frameReady(false)
+    frameReady(false),
+    pPresenter(nullptr)
 {
     InitializeCriticalSection(&frameCriticalSection);
     HRESULT hr = MFStartup(MF_VERSION);
@@ -31,7 +32,7 @@ CaptureController::~CaptureController() {
     MFShutdown();
 }
 
-bool CaptureController::init(int x, int y, int w, int h) {
+bool CaptureController::init() {
     std::wcout << L"Parent window: " << windowManager.hwnd << std::endl;
     if(!windowManager.hwnd || !IsWindow(windowManager.hwnd)) {
         std::wcout << L"Main window not available" << std::endl;
@@ -46,19 +47,17 @@ bool CaptureController::init(int x, int y, int w, int h) {
             }
             std::wcout << L"Video window created: " << windowManager.hwndVideo << std::endl;
         }
-        windowManager.resize(x, y, w, h);
     
         if(!refreshDevices()) {
             std::wcout << L"No devices found!" << std::endl;
             return false;
         }
-        
         std::wcout << L"Found " << deviceController.getDeviceCount() << L" devices" << std::endl;
         if(deviceController.getDeviceCount() > 0) {
             auto* fDevice = deviceController.getDevice(1);
             if(fDevice) {
                 std::wcout << L"Using device: " << fDevice->getName() << std::endl;
-                return initWithDevice(windowManager.hwnd, fDevice->getId(), x, y, w, h);
+                return initWithDevice(windowManager.hwnd, fDevice->getId());
             }
         }
     } catch(...) {
@@ -70,14 +69,7 @@ bool CaptureController::init(int x, int y, int w, int h) {
     return true;
 }
 
-bool CaptureController::initWithDevice(
-    HWND parent,
-    const std::wstring& deviceId,
-    int x,
-    int y,
-    int w,
-    int h
-) {
+bool CaptureController::initWithDevice(HWND parent, const std::wstring& deviceId) {
     currentDeviceId = deviceId; 
     cleanup();
     if(!windowManager.hwndVideo) {
@@ -85,7 +77,6 @@ bool CaptureController::initWithDevice(
             return false;
         }
     }
-    windowManager.resize(x, y, w, h);
     return setupDevice(deviceId);
 }
 
@@ -134,13 +125,8 @@ bool CaptureController::setupDevice(const std::wstring& deviceId) {
         return false;
     }
     
-    if(!createEVR()) {
+    if(!pPresenter->setEVR()) {
         std::wcout << L"Failed to create EVR pipeline" << std::endl;
-        return false;
-    }
-    
-    if(!windowManager.createOverlayWindow()) {
-        std::wcout << L"Could not create overlay window" << std::endl;
         return false;
     }
 
@@ -188,201 +174,6 @@ bool CaptureController::setupDevice(const std::wstring& deviceId) {
 
     if(faceDetectionEnabled) startDetectionThread();
     return true;
-}
-
-/*
-** Create EVR
-*/
-bool CaptureController::createEVR() {
-    HRESULT hr = S_OK;
-    IMFActivate* pSinkActivate = NULL;
-    IMFTopology* pTopology = NULL;
-    IMFTopologyNode* pSourceNode = NULL;
-    IMFTopologyNode* pOutputNode = NULL;
-    IMFStreamDescriptor* pSourceSD = NULL;
-    IMFPresentationDescriptor* pPD = NULL;
-    IMFMediaTypeHandler* pHandler = NULL;
-    IMFMediaEvent* pEvent = NULL;
-    DWORD streamCount = 0;
-    BOOL fSelected = FALSE;
-    DWORD videoStreamIndex = (DWORD)-1;
-    MediaEventType eventType;
-    std::wcout << L"Setting EVR pipeline" << std::endl;
-
-    std::wcout << L"Setting EVR pipeline with window: " << windowManager.hwndVideo << std::endl;
-    hr = MFCreateVideoRendererActivate(windowManager.hwndVideo, &pSinkActivate);
-    if(FAILED(hr)) {
-        std::wcout << L"Failed to create video renderer activate: " << hr << std::endl;
-        goto done;
-    }
-
-    hr = MFCreateTopology(&pTopology);
-    if(FAILED(hr)) {
-        std::wcout << L"Failed to create topology: " << hr << std::endl;
-        goto done;
-    }
-
-    hr = pVideoSource->CreatePresentationDescriptor(&pPD);
-    if(FAILED(hr)) {
-        std::wcout << L"Failed to create presentatin descriptor: " << hr << std::endl;
-        goto done;
-    }
-
-    hr = pPD->GetStreamDescriptorCount(&streamCount);
-    if(FAILED(hr) || streamCount == 0) {
-        std::wcout << L"No streams available: " << hr << std::endl;
-        goto done;
-    }
-    for(DWORD i = 0; i < streamCount; i++) {
-        hr = pPD->GetStreamDescriptorByIndex(i, &fSelected, &pSourceSD);
-        if(SUCCEEDED(hr) && pSourceSD) {
-            hr = pSourceSD->GetMediaTypeHandler(&pHandler);
-            if(SUCCEEDED(hr)) {
-                GUID majorType = GUID_NULL;
-                hr = pHandler->GetMajorType(&majorType);
-                if(SUCCEEDED(hr) && majorType == MFMediaType_Video) {
-                    videoStreamIndex = i;
-                    std::wcout << L"Found video stream at index: " << i << std::endl;
-                    hr = configFormat(pHandler);
-                    break;
-                }
-            }
-            if(pHandler) {
-                pHandler->Release();
-                pHandler = NULL;
-            }
-            if(pSourceSD) {
-                pSourceSD->Release();
-                pSourceSD = NULL;
-            }
-        }
-    }
-    if(videoStreamIndex == (DWORD)-1) {
-        std::wcout << L"No video stream found!" << std::endl;
-        hr = E_FAIL;
-        goto done;
-    }
-    if(!pSourceSD) {
-        hr = pPD->GetStreamDescriptorByIndex(videoStreamIndex, &fSelected, &pSourceSD);
-        if(FAILED(hr)) {
-            std::wcout << L"Failed to get video stream descriptor: " << hr << std::endl;
-            goto done;
-        }
-    }
-
-    hr = MFCreateTopologyNode(
-        MF_TOPOLOGY_SOURCESTREAM_NODE, 
-        &pSourceNode
-    );
-    if(FAILED(hr)) {
-        std::wcout << L"Failed to create source node: " << hr << std::endl;
-        goto done;
-    }
-    hr = pSourceNode->SetUnknown(MF_TOPONODE_SOURCE, pVideoSource);
-    if(FAILED(hr)) {
-        std::wcout << L"Failed to set source: " << hr << std::endl;
-        goto done;
-    }
-    hr = pSourceNode->SetUnknown(MF_TOPONODE_PRESENTATION_DESCRIPTOR, pPD);
-    if(FAILED(hr)) {
-        std::wcout << L"Failed to set presentation descriptor: " << hr << std::endl;
-        goto done;
-    }
-    hr = pSourceNode->SetUnknown(MF_TOPONODE_STREAM_DESCRIPTOR, pSourceSD);
-    if(FAILED(hr)) {
-        std::wcout << L"Failed to set stream descriptor: " << hr << std::endl;
-        goto done;
-    }
-
-    hr = MFCreateTopologyNode(
-        MF_TOPOLOGY_OUTPUT_NODE,
-        &pOutputNode
-    );
-    if(FAILED(hr)) {
-        std::wcout << L"Failed to create output node: " << hr << std::endl;
-        goto done;
-    }
-    hr = pOutputNode->SetObject(pSinkActivate);
-    if(FAILED(hr)) {
-        std::wcout << L"Failed to set sink activate: " << hr << std::endl;
-        goto done;
-    }
-    hr = pOutputNode->SetUINT32(MF_TOPONODE_STREAMID, 0);
-    if(FAILED(hr)) {
-        std::wcout << L"Failed to set stream ID: " << hr << std::endl;
-        goto done;
-    }
-    hr = pOutputNode->SetUINT32(MF_TOPONODE_NOSHUTDOWN_ON_REMOVE, FALSE);
-    if(FAILED(hr)) {
-        std::wcout << L"Failed to set no shutdown: " << hr << std::endl;
-        goto done;
-    }
-
-    hr = pTopology->AddNode(pSourceNode);
-    if(FAILED(hr)) {
-        std::wcout << L"Failed to add source node: " << hr << std::endl;
-        goto done;
-    }
-    hr = pTopology->AddNode(pOutputNode);
-    if(FAILED(hr)) {
-        std::wcout << L"Failed to add output node: " << hr << std::endl;
-        goto done;
-    }
-    hr = pSourceNode->ConnectOutput(0, pOutputNode, 0);
-    if(FAILED(hr)) {
-        std::wcout << L"Failed to connect nodes: " << hr << std::endl;
-        goto done;
-    }
-
-    hr = MFCreateMediaSession(NULL, &pSession);
-    if(FAILED(hr)) {
-        std::wcout << L"Failed to create media session: " << hr << std::endl;
-        goto done;
-    }
-    hr = pSession->SetTopology(
-        MFSESSION_SETTOPOLOGY_IMMEDIATE, 
-        pTopology
-    );
-    if(FAILED(hr)) {
-        std::wcout << L"Failed to set topology: " << hr << std::endl;
-        goto done;
-    }
-
-    hr = pSession->GetEvent(0, &pEvent);
-    if(SUCCEEDED(hr)) {
-        hr = pEvent->GetType(&eventType);
-        if(SUCCEEDED(hr)) {
-            std::wcout << L"First media event type: " << eventType << std::endl;
-        }
-        pEvent->Release();
-    }
-
-    PROPVARIANT varStart;
-    PropVariantInit(&varStart);
-    varStart.vt = VT_EMPTY;
-    hr = pSession->Start(&GUID_NULL, &varStart);
-    if(FAILED(hr)) {
-        std::cout << L"Failed to start sesison: " << hr << std::endl;
-        hr = pSession->Start(NULL, NULL);
-        if(FAILED(hr)) {
-            std::wcout << L"Alternative start failed: " << hr << std::endl;
-            goto done;
-        }
-    }
-
-    isRunning = true;
-    std::wcout << L"EVR setup complete!" << std::endl;
-    done:
-        if(pSourceNode) pSourceNode->Release();
-        if(pOutputNode) pOutputNode->Release();
-        if(pTopology) pTopology->Release();
-        if(pSinkActivate) pSinkActivate->Release();
-        if(pSourceSD) pSourceSD->Release();
-        if(pPD) pPD->Release();
-        if(pHandler) pHandler->Release();
-        if(pEvent) pEvent->Release();
-
-        return SUCCEEDED(hr);
 }
 
 bool CaptureController::createSourceReader(IMFMediaSource* pCaptureSource) {
@@ -555,7 +346,7 @@ HRESULT CaptureController::configFormat(IMFMediaTypeHandler* pHandler) {
 }
 
 /*
-** Enable Face Detection
+** Face Detection
 */
 void CaptureController::enableFaceDetection(bool enable) {
     faceDetectionEnabled = enable;
@@ -568,6 +359,12 @@ void CaptureController::enableFaceDetection(bool enable) {
         startDetectionThread();
     } else {
         std::wcout << "Enable face detection FATAL ERR." << std::endl;
+    }
+}
+
+void CaptureController::setFacesForOverlay(const std::vector<Rect>& faces) {
+    if(pPresenter) {
+        pPresenter->setFaces(faces);
     }
 }
 
@@ -690,10 +487,7 @@ std::vector<std::vector<unsigned char>> CaptureController::convertFrameToGraysca
     } else {
         std::wcout << L"Failed to get current media type" << std::endl;
     }
-    
     if (width == 0 || height == 0) {
-        width = 640;
-        height = 480;
         std::wcout << L"Using default" << width << L"x" << height << std::endl;
     }
     
@@ -872,6 +666,9 @@ void CaptureController::detectionWorker() {
                 std::lock_guard<std::mutex> lock(facesMutex);
                 currentDetectedFaces = newFaces;
             }
+            if(pPresenter) {
+                pPresenter->setFaces(newFaces);
+            }
             if(windowManager.hwnd && newFaces != prevFaces) {
                 prevFaces = newFaces;
                 windowManager.updateOverlayWindow();
@@ -939,9 +736,5 @@ void CaptureController::cleanup() {
     if(windowManager.hwndVideo) {
         DestroyWindow(windowManager.hwndVideo);
         windowManager.hwndVideo = nullptr;
-    }
-    if(windowManager.hwndOverlay) {
-        DestroyWindow(windowManager.hwndOverlay);
-        windowManager.hwndOverlay = nullptr;
     }
 }

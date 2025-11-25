@@ -21,6 +21,7 @@
 #include "device_controller.h"
 #include "../classifier/renderer.h"
 #include "../window_manager.h"
+#include "../evr_presenter/evr_presenter.h"
 
 class CaptureController : public IMFSourceReaderCallback {
     public:
@@ -34,6 +35,7 @@ class CaptureController : public IMFSourceReaderCallback {
         IMFActivate** ppDevices;
         IMFMediaSession* pSession;
         IMFVideoDisplayControl* pVideoDisplay;
+        EVRPresenter* pPresenter;
         UINT32 deviceCount;
 
         Renderer renderer;
@@ -53,26 +55,13 @@ class CaptureController : public IMFSourceReaderCallback {
 
         bool setupDevice(const std::wstring& deviceId);
         bool createSourceReader(IMFMediaSource* pCaptureSource);
-        bool createEVR();
         HRESULT configFormat(IMFMediaTypeHandler* pHandler);
 
         CaptureController(WindowManager& wm);
         ~CaptureController();
 
-        bool init(
-            int x,
-            int y,
-            int w,
-            int h
-        );
-        bool initWithDevice(
-            HWND parent,
-            const std::wstring& deviceId,
-            int x,
-            int y,
-            int w,
-            int h
-        );
+        bool init();
+        bool initWithDevice(HWND parent, const std::wstring& deviceId);
         bool refreshDevices();
         IDevice* getCurrentDevice() const;
 
@@ -82,6 +71,7 @@ class CaptureController : public IMFSourceReaderCallback {
             BYTE* pData, 
             DWORD length
         );
+        void setFacesForOverlay(const std::vector<Rect>& faces);
         void processFrame();
         
         bool isCapturing() const {
