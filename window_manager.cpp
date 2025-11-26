@@ -394,6 +394,7 @@ void WindowManager::createWindow() {
     wc = {0};
     static const wchar_t* WINDOW_CLASS = L"MainWindow";
     wc.lpszClassName = WINDOW_CLASS;
+    static const wchar_t* WINDOW_NAME = L"Camvalley";
     wc.lpfnWndProc = WindowManager::WindowProc;
     wc.hInstance = GetModuleHandleW(nullptr);
     if(!RegisterClass(&wc)) {
@@ -408,7 +409,7 @@ void WindowManager::createWindow() {
 
     hwnd = CreateWindowW(
         wc.lpszClassName,
-        WINDOW_CLASS,
+        WINDOW_NAME,
         WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT,
         CW_USEDEFAULT,
