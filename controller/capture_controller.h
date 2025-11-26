@@ -19,10 +19,10 @@
 #include <atomic>
 #include <condition_variable> 
 #include "device_controller.h"
-#include "../classifier/renderer.h"
+#include "../renderer/classifier_renderer.h"
 #include "../window_manager.h"
-#include "../evr_presenter/evr_presenter.h"
 
+class EVRRenderer;
 class CaptureController : public IMFSourceReaderCallback {
     public:
         std::wstring currentDeviceId;
@@ -35,10 +35,11 @@ class CaptureController : public IMFSourceReaderCallback {
         IMFActivate** ppDevices;
         IMFMediaSession* pSession;
         IMFVideoDisplayControl* pVideoDisplay;
-        EVRPresenter* pPresenter;
         UINT32 deviceCount;
 
-        Renderer renderer;
+        ClassifierRenderer classifierRenderer;
+        EVRRenderer* evrRenderer;
+        
         CRITICAL_SECTION frameCriticalSection;
         std::vector<std::vector<unsigned char>> currentFrame;
         bool frameReady;
@@ -60,8 +61,20 @@ class CaptureController : public IMFSourceReaderCallback {
         CaptureController(WindowManager& wm);
         ~CaptureController();
 
-        bool init();
-        bool initWithDevice(HWND parent, const std::wstring& deviceId);
+        bool init(
+            int x,
+            int y,
+            int w,
+            int h
+        );
+        bool initWithDevice(
+            HWND parent,
+            const std::wstring& deviceId,
+            int x,
+            int y,
+            int w,
+            int h
+        );
         bool refreshDevices();
         IDevice* getCurrentDevice() const;
 
@@ -71,7 +84,6 @@ class CaptureController : public IMFSourceReaderCallback {
             BYTE* pData, 
             DWORD length
         );
-        void setFacesForOverlay(const std::vector<Rect>& faces);
         void processFrame();
         
         bool isCapturing() const {
@@ -80,9 +92,14 @@ class CaptureController : public IMFSourceReaderCallback {
         std::wstring getCurrentDeviceId() const {
             return currentDeviceId;
         }
-        Renderer& getRenderer() {
-            return renderer;
+
+        ClassifierRenderer& getClassifierRenderer() {
+            return classifierRenderer;
         }
+        EVRRenderer& getEVRRenderer() {
+            return *evrRenderer;
+        }
+
         void getCurrentFrame(std::vector<std::vector<unsigned char>>& frame);
         void cleanup();
 

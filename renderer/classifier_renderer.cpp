@@ -1,9 +1,9 @@
-#include "renderer.h"
+#include "classifier_renderer.h"
 #include "../loader.h"
 #include <iostream>
 #include <chrono>
 
-bool Renderer::load(const std::string& fileName) {
+bool ClassifierRenderer::load(const std::string& fileName) {
     Loader loader;
     cascadeLoaded = loader.loadFile(fileName, faceCascade);
     return cascadeLoaded && faceCascade.isLoaded();
@@ -12,7 +12,7 @@ bool Renderer::load(const std::string& fileName) {
 /*
 ** Create Integral Image
 */
-std::vector<std::vector<float>> Renderer::createIntegralImage(const std::vector<std::vector<unsigned char>>& image) {
+std::vector<std::vector<float>> ClassifierRenderer::createIntegralImage(const std::vector<std::vector<unsigned char>>& image) {
     if (image.empty() || image[0].empty()) {
         return std::vector<std::vector<float>>();
     }
@@ -37,7 +37,7 @@ std::vector<std::vector<float>> Renderer::createIntegralImage(const std::vector<
     return integral;
 }
 
-void Renderer::forceEnable() {
+void ClassifierRenderer::forceEnable() {
     faceDetectionEnabled = true;
     cascadeLoaded = true;
 }
@@ -45,7 +45,7 @@ void Renderer::forceEnable() {
 /*
 ** Process Frame for Faces
 */
-void Renderer::processFrameForFaces(const std::vector<std::vector<unsigned char>>& frame) {
+void ClassifierRenderer::processFrameForFaces(const std::vector<std::vector<unsigned char>>& frame) {
     static auto lastProcessTime = std::chrono::steady_clock::now();
     auto currentTime = std::chrono::steady_clock::now();
     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(currentTime - lastProcessTime);
@@ -64,7 +64,37 @@ void Renderer::processFrameForFaces(const std::vector<std::vector<unsigned char>
     }
 }
 
-std::vector<Rect> Renderer::getCurrentFaces() {
+/*
+** Draw
+*/
+void ClassifierRenderer::draw(HDC hdc, const std::vector<Rect>& faces) {
+    if(faces.empty()) {
+        std::wcout << "Empty!!" << std::endl;
+        return;
+    }
+
+    static HPEN redPen = CreatePen(PS_SOLID, 3, RGB(255, 0, 0));
+    static HBRUSH nullBrush = (HBRUSH)GetStockObject(NULL_BRUSH);
+
+    HPEN oldPen = (HPEN)SelectObject(hdc, redPen);
+    HBRUSH oldBrush = (HBRUSH)SelectObject(hdc, nullBrush);
+    int oldBkMode = SetBkMode(hdc, TRANSPARENT);
+
+    for(const auto& face : faces) {
+        Rectangle(
+            hdc,
+            face.x,
+            face.y,
+            face.x + face.width,
+            face.y + face.height
+        );
+    }
+    SetBkMode(hdc, oldBkMode);
+    SelectObject(hdc, oldPen);
+    SelectObject(hdc, oldBrush);
+}
+
+std::vector<Rect> ClassifierRenderer::getCurrentFaces() {
     std::lock_guard<std::mutex> lock(facesMutex);
     return currentFaces;
 }

@@ -1,3 +1,6 @@
+#ifndef RECT_H
+#define RECT_H
+
 class Rect {
     public:
         int x;
@@ -27,3 +30,5 @@ class Rect {
             return !(*this == other);
         }
 };
+
+#endif

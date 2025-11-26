@@ -1,4 +1,5 @@
-#include "evr_presenter.h"
+#include "evr_renderer.h"
+#include "../controller/capture_controller.h"
 #include "../window_manager.h"
 #include <Windows.h>
 #include <mfapi.h>
@@ -8,10 +9,16 @@
 #include <evr.h>
 #include <string>
 #include <vector>
+#include <queue>
+#include <mutex>
+#include <atomic>
 #include <iostream>
-#include <condition_variable> 
 
-bool EVRPresenter::setEVR() {
+EVRRenderer::EVRRenderer(CaptureController* pCaptureController, WindowManager* pWindowManager) :
+    pCaptureController(*pCaptureController),
+    pWindowManager(*pWindowManager) {}
+
+bool EVRRenderer::setEVR() {
     HRESULT hr = S_OK;
     IMFActivate* pSinkActivate = NULL;
     IMFTopology* pTopology = NULL;
@@ -27,25 +34,11 @@ bool EVRPresenter::setEVR() {
     MediaEventType eventType;
     std::wcout << L"Setting EVR pipeline" << std::endl;
 
-    hr = CreateEVRPresenter(m_windowManager, &pSinkActivate);
+    std::wcout << L"Setting EVR pipeline with window: " << pWindowManager.hwndVideo << std::endl;
+    hr = MFCreateVideoRendererActivate(pWindowManager.hwndVideo, &pSinkActivate);
     if(FAILED(hr)) {
         std::wcout << L"Failed to create video renderer activate: " << hr << std::endl;
-        hr = MFCreateVideoRendererActivate(m_windowManager.hwndVideo, &pSinkActivate);
-    }
-    
-    if(pSinkActivate) {
-        IUnknown* pPresenterUnknown = NULL;
-        hr = pSinkActivate->ActivateObject(IID_IUnknown, (void**)&pPresenterUnknown);
-        if(SUCCEEDED(hr)) {
-            hr = pPresenterUnknown->QueryInterface(
-                __uuidof(EVRPresenter),
-                (void**)this
-            );
-            if(SUCCEEDED(hr)) {
-                std::wcout << L"EVR presenter init!!" << std::endl;
-            }
-            pPresenterUnknown->Release();
-        }
+        goto done;
     }
 
     hr = MFCreateTopology(&pTopology);
@@ -54,7 +47,7 @@ bool EVRPresenter::setEVR() {
         goto done;
     }
 
-    hr = m_captureController.pVideoSource->CreatePresentationDescriptor(&pPD);
+    hr = pCaptureController.pVideoSource->CreatePresentationDescriptor(&pPD);
     if(FAILED(hr)) {
         std::wcout << L"Failed to create presentatin descriptor: " << hr << std::endl;
         goto done;
@@ -75,7 +68,7 @@ bool EVRPresenter::setEVR() {
                 if(SUCCEEDED(hr) && majorType == MFMediaType_Video) {
                     videoStreamIndex = i;
                     std::wcout << L"Found video stream at index: " << i << std::endl;
-                    hr = m_captureController.configFormat(pHandler);
+                    hr = pCaptureController.configFormat(pHandler);
                     break;
                 }
             }
@@ -110,7 +103,7 @@ bool EVRPresenter::setEVR() {
         std::wcout << L"Failed to create source node: " << hr << std::endl;
         goto done;
     }
-    hr = pSourceNode->SetUnknown(MF_TOPONODE_SOURCE, m_captureController.pVideoSource);
+    hr = pSourceNode->SetUnknown(MF_TOPONODE_SOURCE, pCaptureController.pVideoSource);
     if(FAILED(hr)) {
         std::wcout << L"Failed to set source: " << hr << std::endl;
         goto done;
@@ -166,12 +159,12 @@ bool EVRPresenter::setEVR() {
         goto done;
     }
 
-    hr = MFCreateMediaSession(NULL, &m_captureController.pSession);
+    hr = MFCreateMediaSession(NULL, &pCaptureController.pSession);
     if(FAILED(hr)) {
         std::wcout << L"Failed to create media session: " << hr << std::endl;
         goto done;
     }
-    hr = m_captureController.pSession->SetTopology(
+    hr = pCaptureController.pSession->SetTopology(
         MFSESSION_SETTOPOLOGY_IMMEDIATE, 
         pTopology
     );
@@ -180,7 +173,7 @@ bool EVRPresenter::setEVR() {
         goto done;
     }
 
-    hr = m_captureController.pSession->GetEvent(0, &pEvent);
+    hr = pCaptureController.pSession->GetEvent(0, &pEvent);
     if(SUCCEEDED(hr)) {
         hr = pEvent->GetType(&eventType);
         if(SUCCEEDED(hr)) {
@@ -192,17 +185,17 @@ bool EVRPresenter::setEVR() {
     PROPVARIANT varStart;
     PropVariantInit(&varStart);
     varStart.vt = VT_EMPTY;
-    hr = m_captureController.pSession->Start(&GUID_NULL, &varStart);
+    hr = pCaptureController.pSession->Start(&GUID_NULL, &varStart);
     if(FAILED(hr)) {
         std::cout << L"Failed to start sesison: " << hr << std::endl;
-        hr = m_captureController.pSession->Start(NULL, NULL);
+        hr = pCaptureController.pSession->Start(NULL, NULL);
         if(FAILED(hr)) {
             std::wcout << L"Alternative start failed: " << hr << std::endl;
             goto done;
         }
     }
 
-    m_captureController.isRunning = true;
+    pCaptureController.isRunning = true;
     std::wcout << L"EVR setup complete!" << std::endl;
     done:
         if(pSourceNode) pSourceNode->Release();
@@ -215,4 +208,4 @@ bool EVRPresenter::setEVR() {
         if(pEvent) pEvent->Release();
 
         return SUCCEEDED(hr);
-} 
+}

@@ -1,11 +1,11 @@
-#include "classifier.h"
-#include "haar_cascade.h"
+#include "../classifier/classifier.h"
+#include "../classifier/haar_cascade.h"
 #include <windows.h>
 #include <thread>
 #include <iostream>
 #include <mutex>
 
-class Renderer {
+class ClassifierRenderer {
     public:
         HaarCascade faceCascade;
         std::vector<Rect> currentFaces;
@@ -15,6 +15,7 @@ class Renderer {
 
         bool load(const std::string& fileName);
         void processFrameForFaces(const std::vector<std::vector<unsigned char>>& frame);
+        void draw(HDC hdc, const std::vector<Rect>& faces);
 
         void forceEnable();
         bool isCascadeLoaded() const {

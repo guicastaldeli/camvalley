@@ -16,22 +16,16 @@ class CaptureController;
 class WindowManager {
     public:
         WNDCLASS wc;
+        HWND hwnd;
+        HWND hwndVideo;
+        HWND hwndOverlay;
         CaptureController* captureController;
-        
+
         WindowManager();
         ~WindowManager();
-        
-        HWND hwnd;
-        int x = 0;
-        int y = 0;
+
         int width = 800;
         int height = 600;
-        
-        HWND hwndVideo;
-        int videoX = 20;
-        int videoY = 20;
-        int videoWidth = 640;
-        int videoHeight = 460;
 
         static LRESULT CALLBACK WindowProc(
             HWND hwnd,
@@ -50,6 +44,15 @@ class WindowManager {
         );
         bool createVideoWindow();
         void updateVideoWindow();
+        
+        static LRESULT CALLBACK OverlayWndProc(
+            HWND hwnd,
+            UINT msg,
+            WPARAM wParam,
+            LPARAM lParam
+        );
+        bool createOverlayWindow();
+        void updateOverlayWindow();
     
         void resize(int x, int y, int w, int h);
         void run();

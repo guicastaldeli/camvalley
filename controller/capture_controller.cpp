@@ -2,6 +2,7 @@
 #pragma comment(lib, "strmiids.lib")
 #pragma comment(lib, "dxva2.lib")
 #include "capture_controller.h"
+#include "../renderer/evr_renderer.h"
 #include <iostream>
 #include <evr.h>
 #include <d3d9.h>
@@ -18,10 +19,11 @@ CaptureController::CaptureController(WindowManager& wm) :
     pVideoDisplay(nullptr),
     isRunning(false),
     faceDetectionEnabled(true),
-    renderer(),
-    frameReady(false),
-    pPresenter(nullptr)
+    classifierRenderer(),
+    evrRenderer(nullptr),
+    frameReady(false)
 {
+    evrRenderer = new EVRRenderer(this, &wm);
     InitializeCriticalSection(&frameCriticalSection);
     HRESULT hr = MFStartup(MF_VERSION);
     if(FAILED(hr)) std::wcout << L"MFStartup failed: " << hr << std::endl;
@@ -32,7 +34,7 @@ CaptureController::~CaptureController() {
     MFShutdown();
 }
 
-bool CaptureController::init() {
+bool CaptureController::init(int x, int y, int w, int h) {
     std::wcout << L"Parent window: " << windowManager.hwnd << std::endl;
     if(!windowManager.hwnd || !IsWindow(windowManager.hwnd)) {
         std::wcout << L"Main window not available" << std::endl;
@@ -47,17 +49,19 @@ bool CaptureController::init() {
             }
             std::wcout << L"Video window created: " << windowManager.hwndVideo << std::endl;
         }
+        windowManager.resize(x, y, w, h);
     
         if(!refreshDevices()) {
             std::wcout << L"No devices found!" << std::endl;
             return false;
         }
+        
         std::wcout << L"Found " << deviceController.getDeviceCount() << L" devices" << std::endl;
         if(deviceController.getDeviceCount() > 0) {
             auto* fDevice = deviceController.getDevice(1);
             if(fDevice) {
                 std::wcout << L"Using device: " << fDevice->getName() << std::endl;
-                return initWithDevice(windowManager.hwnd, fDevice->getId());
+                return initWithDevice(windowManager.hwnd, fDevice->getId(), x, y, w, h);
             }
         }
     } catch(...) {
@@ -69,7 +73,14 @@ bool CaptureController::init() {
     return true;
 }
 
-bool CaptureController::initWithDevice(HWND parent, const std::wstring& deviceId) {
+bool CaptureController::initWithDevice(
+    HWND parent,
+    const std::wstring& deviceId,
+    int x,
+    int y,
+    int w,
+    int h
+) {
     currentDeviceId = deviceId; 
     cleanup();
     if(!windowManager.hwndVideo) {
@@ -77,6 +88,7 @@ bool CaptureController::initWithDevice(HWND parent, const std::wstring& deviceId
             return false;
         }
     }
+    windowManager.resize(x, y, w, h);
     return setupDevice(deviceId);
 }
 
@@ -125,8 +137,13 @@ bool CaptureController::setupDevice(const std::wstring& deviceId) {
         return false;
     }
     
-    if(!pPresenter->setEVR()) {
+    if(!getEVRRenderer().setEVR()) {
         std::wcout << L"Failed to create EVR pipeline" << std::endl;
+        return false;
+    }
+    
+    if(!windowManager.createOverlayWindow()) {
+        std::wcout << L"Could not create overlay window" << std::endl;
         return false;
     }
 
@@ -346,15 +363,15 @@ HRESULT CaptureController::configFormat(IMFMediaTypeHandler* pHandler) {
 }
 
 /*
-** Face Detection
+** Enable Face Detection
 */
 void CaptureController::enableFaceDetection(bool enable) {
     faceDetectionEnabled = enable;
     if(enable) {
-        if(!renderer.isCascadeLoaded()) {
+        if(!classifierRenderer.isCascadeLoaded()) {
             std::wcout << L"Loading cascade..." << std::endl;
             loadCascade("../.data/haarcascade_frontalface_default.xml");
-            renderer.forceEnable();
+            classifierRenderer.forceEnable();
         }
         startDetectionThread();
     } else {
@@ -362,17 +379,11 @@ void CaptureController::enableFaceDetection(bool enable) {
     }
 }
 
-void CaptureController::setFacesForOverlay(const std::vector<Rect>& faces) {
-    if(pPresenter) {
-        pPresenter->setFaces(faces);
-    }
-}
-
 /*
 ** Load Cascade
 */
 void CaptureController::loadCascade(const std::string& file) {
-    if(renderer.load(file)) {
+    if(classifierRenderer.load(file)) {
         std::wcout << L"File loaded!: " << file.c_str() << std::endl;
     } else {
         std::wcout << L"Failed to load file :( " << file.c_str() << std::endl;  
@@ -448,7 +459,7 @@ void CaptureController::processFrame() {
         frameReady = true;
         LeaveCriticalSection(&frameCriticalSection);
 
-        renderer.processFrameForFaces(frame);
+        classifierRenderer.processFrameForFaces(frame);
     } else {
         std::wcout << L"no frame data available!!" << std::endl;
     }
@@ -487,7 +498,10 @@ std::vector<std::vector<unsigned char>> CaptureController::convertFrameToGraysca
     } else {
         std::wcout << L"Failed to get current media type" << std::endl;
     }
+    
     if (width == 0 || height == 0) {
+        width = 640;
+        height = 480;
         std::wcout << L"Using default" << width << L"x" << height << std::endl;
     }
     
@@ -660,14 +674,11 @@ void CaptureController::detectionWorker() {
             }
         }
         if(!frame.empty()) {
-            renderer.processFrameForFaces(frame);
-            std::vector<Rect> newFaces = renderer.getCurrentFaces();
+            classifierRenderer.processFrameForFaces(frame);
+            std::vector<Rect> newFaces = classifierRenderer.getCurrentFaces();
             {
                 std::lock_guard<std::mutex> lock(facesMutex);
                 currentDetectedFaces = newFaces;
-            }
-            if(pPresenter) {
-                pPresenter->setFaces(newFaces);
             }
             if(windowManager.hwnd && newFaces != prevFaces) {
                 prevFaces = newFaces;
@@ -736,5 +747,9 @@ void CaptureController::cleanup() {
     if(windowManager.hwndVideo) {
         DestroyWindow(windowManager.hwndVideo);
         windowManager.hwndVideo = nullptr;
+    }
+    if(windowManager.hwndOverlay) {
+        DestroyWindow(windowManager.hwndOverlay);
+        windowManager.hwndOverlay = nullptr;
     }
 }
