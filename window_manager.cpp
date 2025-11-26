@@ -1,5 +1,6 @@
 #include "window_manager.h"
 #include "controller/capture_controller.h"
+#include "renderer/d2d_renderer.h"
 #include <iostream>
 
 WindowManager::WindowManager(): 
@@ -227,7 +228,7 @@ bool WindowManager::createOverlayWindow() {
         WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
         0, 0,
         width, height,
-        hwnd,
+        hwndVideo,
         NULL,
         GetModuleHandle(NULL),
         this
@@ -240,9 +241,9 @@ bool WindowManager::createOverlayWindow() {
 
     SetWindowPos(
         hwndOverlay,
-        HWND_TOPMOST,
+        HWND_TOP,
         0, 0, 0, 0,
-        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW
     );
     
     std::wcout << L"Overlay window created successfully: " << hwndOverlay << std::endl;
@@ -256,6 +257,12 @@ bool WindowManager::createOverlayWindow() {
 
 void WindowManager::updateOverlayWindow() {
     if(hwndOverlay && IsWindow(hwndOverlay)) {
+        SetWindowPos(
+            hwndOverlay,
+            HWND_TOP,
+            0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW
+        );
         InvalidateRect(hwndOverlay, NULL, TRUE);
         UpdateWindow(hwndOverlay);
     }
@@ -446,9 +453,8 @@ void WindowManager::resize(int x, int y, int w, int h) {
         if(hwndOverlay && IsWindow(hwndOverlay)) {
             MoveWindow(hwndOverlay, 0, 0, w, h, TRUE);
         }
-        if(captureController->pVideoDisplay) {
-            RECT rc { 0, 0, w, h };
-            captureController->pVideoDisplay->SetVideoPosition(NULL, &rc);
+        if(captureController && captureController->useD2D) {
+            captureController->d2dRenderer->resize(w, h);
         }
     }
 }

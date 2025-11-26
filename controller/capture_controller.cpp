@@ -2,7 +2,7 @@
 #pragma comment(lib, "strmiids.lib")
 #pragma comment(lib, "dxva2.lib")
 #include "capture_controller.h"
-#include "../renderer/evr_renderer.h"
+#include "../renderer/d2d_renderer.h"
 #include <iostream>
 #include <evr.h>
 #include <d3d9.h>
@@ -20,18 +20,23 @@ CaptureController::CaptureController(WindowManager& wm) :
     isRunning(false),
     faceDetectionEnabled(true),
     classifierRenderer(),
-    evrRenderer(nullptr),
+    d2dRenderer(nullptr),
+    useD2D(false),
     frameReady(false)
 {
-    evrRenderer = new EVRRenderer(this, &wm);
     InitializeCriticalSection(&frameCriticalSection);
     HRESULT hr = MFStartup(MF_VERSION);
     if(FAILED(hr)) std::wcout << L"MFStartup failed: " << hr << std::endl;
 }
 CaptureController::~CaptureController() {
     cleanup();
+    stopDetectionThread();
     DeleteCriticalSection(&frameCriticalSection);
     MFShutdown();
+    if(d2dRenderer) {
+        delete d2dRenderer;
+        d2dRenderer = nullptr;
+    }
 }
 
 bool CaptureController::init(int x, int y, int w, int h) {
@@ -93,6 +98,27 @@ bool CaptureController::initWithDevice(
 }
 
 /*
+** Set Direct2D
+*/
+bool CaptureController::setD2D() {
+    if(!windowManager.hwndVideo) {
+        std::wcout << "No video available for direct2d" << std::endl;
+        return false;
+    }
+    if(!d2dRenderer) {
+        d2dRenderer = new D2DRenderer();
+    }
+    if(!d2dRenderer->init(windowManager.hwndVideo)) {
+        std::wcout << L"failed to init direct2d" << std::endl;
+        return false;
+    }
+
+    useD2D = true;
+    std::wcout << L"d2d render setup complete!!!" << std::endl;
+    return true;
+}
+
+/*
 ** Setup Device
 */
 bool CaptureController::setupDevice(const std::wstring& deviceId) {
@@ -137,11 +163,6 @@ bool CaptureController::setupDevice(const std::wstring& deviceId) {
         return false;
     }
     
-    if(!getEVRRenderer().setEVR()) {
-        std::wcout << L"Failed to create EVR pipeline" << std::endl;
-        return false;
-    }
-    
     if(!windowManager.createOverlayWindow()) {
         std::wcout << L"Could not create overlay window" << std::endl;
         return false;
@@ -174,6 +195,10 @@ bool CaptureController::setupDevice(const std::wstring& deviceId) {
         pAttrsCapture->Release();
         return false;
     }
+    if(!setD2D()) {
+        std::wcout << L"Failed to create d2d pipeline" << std::endl;
+        return false;
+    }
 
     hr = MFCreateDeviceSource(pAttrsCapture, &pCaptureSource);
     pAttrsCapture->Release();
@@ -200,7 +225,7 @@ bool CaptureController::createSourceReader(IMFMediaSource* pCaptureSource) {
     }
 
     IMFAttributes* pAttrs = nullptr;
-    HRESULT hr = MFCreateAttributes(&pAttrs, 2);
+    HRESULT hr = MFCreateAttributes(&pAttrs, 3);
     if(FAILED(hr)) {
         std::wcout << L"Failed to create attributes" << std::endl;
         return false;
@@ -478,7 +503,12 @@ void CaptureController::getCurrentFrame(std::vector<std::vector<unsigned char>>&
 std::vector<std::vector<unsigned char>> CaptureController::convertFrameToGrayscale(
     BYTE* pData,
     DWORD length
-) {    
+) { 
+    if (!pData || length == 0) {
+        std::wcout << L"Invalid frame data in convertFrameToGrayscale" << std::endl;
+        return std::vector<std::vector<unsigned char>>();
+    }
+
     IMFMediaType* pType = nullptr;
     UINT32 width = 0;
     UINT32 height = 0;
@@ -564,15 +594,60 @@ STDMETHODIMP CaptureController::OnReadSample(
     LONGLONG llTimestamp,
     IMFSample* pSample
 ) {
+    std::wcout << L"OnReadSample entered" << std::endl;
     if(FAILED(hrStatus)) {
         std::wcout << L"On Read Sample failed!: " << hrStatus << std::endl;
         return hrStatus;
     }
-    if(dwStreamFlags & MF_SOURCE_READERF_ENDOFSTREAM) {
-        std::wcout << L"ENd of stream reached" << std::endl;
-        return S_OK;
-    }
-    if(pSample == nullptr) {
+    try {
+        if(dwStreamFlags & MF_SOURCE_READERF_ENDOFSTREAM) {
+            std::wcout << L"End of stream reached" << std::endl;
+            return S_OK;
+        }
+        if(pSample == nullptr) {
+            if(pReader) {
+                pReader->ReadSample(
+                    MF_SOURCE_READER_FIRST_VIDEO_STREAM,
+                    0,
+                    nullptr,
+                    nullptr,
+                    nullptr,
+                    nullptr
+                );
+            }
+            return S_OK;
+        }
+        if(useD2D && d2dRenderer) {
+            std::wcout << L"Rendering with D2D" << std::endl;
+            if(d2dRenderer->renderFrame(pSample)) {
+                windowManager.updateOverlayWindow();
+            }
+        }
+    
+        IMFMediaBuffer* pBuffer = nullptr;
+        HRESULT hr = pSample->ConvertToContiguousBuffer(&pBuffer);
+        if(SUCCEEDED(hr)) {
+            BYTE* pData = nullptr;
+            DWORD maxLength;
+            DWORD currentLength;
+    
+            hr = pBuffer->Lock(&pData, &maxLength, &currentLength);
+            if(SUCCEEDED(hr) && pData && currentLength > 0) {
+                auto frame = convertFrameToGrayscale(pData, currentLength);
+                EnterCriticalSection(&frameCriticalSection);
+                currentFrame = frame;
+                frameReady = true;
+                LeaveCriticalSection(&frameCriticalSection);
+    
+                if(faceDetectionEnabled && detectionRunning) {
+                    pushFrameToQueue(frame);
+                }
+    
+                pBuffer->Unlock();
+            }   
+            pBuffer->Release();
+        }
+    
         if(pReader) {
             pReader->ReadSample(
                 MF_SOURCE_READER_FIRST_VIDEO_STREAM,
@@ -583,43 +658,12 @@ STDMETHODIMP CaptureController::OnReadSample(
                 nullptr
             );
         }
-        return S_OK;
+    }   catch(const std::exception& e) {
+        std::wcout << L"Exception in OnReadSample: " << e.what() << std::endl;
+    } catch (...) {
+        std::wcout << L"Unknown exception in OnReadSample" << std::endl;
     }
 
-    IMFMediaBuffer* pBuffer = nullptr;
-    HRESULT hr = pSample->ConvertToContiguousBuffer(&pBuffer);
-    if(SUCCEEDED(hr)) {
-        BYTE* pData = nullptr;
-        DWORD maxLength;
-        DWORD currentLength;
-
-        hr = pBuffer->Lock(&pData, &maxLength, &currentLength);
-        if(SUCCEEDED(hr) && pData && currentLength > 0) {
-            auto frame = convertFrameToGrayscale(pData, currentLength);
-            EnterCriticalSection(&frameCriticalSection);
-            currentFrame = frame;
-            frameReady = true;
-            LeaveCriticalSection(&frameCriticalSection);
-
-            if(faceDetectionEnabled && detectionRunning) {
-                pushFrameToQueue(frame);
-            }
-
-            pBuffer->Unlock();
-        }   
-        pBuffer->Release();
-    }
-
-    if(pReader) {
-        pReader->ReadSample(
-            MF_SOURCE_READER_FIRST_VIDEO_STREAM,
-            0,
-            nullptr,
-            nullptr,
-            nullptr,
-            nullptr
-        );
-    }
     return S_OK;
 }
 
@@ -698,7 +742,7 @@ void CaptureController::pushFrameToQueue(const std::vector<std::vector<unsigned 
     if(!detectionRunning || !faceDetectionEnabled) return;
     {
         std::lock_guard<std::mutex> lock(queueMutex);
-        if(frameQueue.size() > 5) frameQueue.pop();
+        if(frameQueue.size() >= 5) return;
         frameQueue.push(frame);
     }
     queueCondition.notify_one();
@@ -733,6 +777,10 @@ void CaptureController::cleanup() {
     if(pVideoSource) {
         pVideoSource->Release();
         pVideoSource = nullptr;
+    }
+    if(d2dRenderer) {
+        delete d2dRenderer;
+        d2dRenderer = nullptr;
     }
     if(ppDevices) {
         for(UINT32 i = 0; i < deviceCount; i++) {

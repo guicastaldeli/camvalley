@@ -20,9 +20,10 @@
 #include <condition_variable> 
 #include "device_controller.h"
 #include "../renderer/classifier_renderer.h"
+#include "../renderer/d2d_renderer.h"
 #include "../window_manager.h"
 
-class EVRRenderer;
+class D2DRenderer;
 class CaptureController : public IMFSourceReaderCallback {
     public:
         std::wstring currentDeviceId;
@@ -38,7 +39,8 @@ class CaptureController : public IMFSourceReaderCallback {
         UINT32 deviceCount;
 
         ClassifierRenderer classifierRenderer;
-        EVRRenderer* evrRenderer;
+        D2DRenderer* d2dRenderer;
+        bool useD2D;
         
         CRITICAL_SECTION frameCriticalSection;
         std::vector<std::vector<unsigned char>> currentFrame;
@@ -96,10 +98,7 @@ class CaptureController : public IMFSourceReaderCallback {
         ClassifierRenderer& getClassifierRenderer() {
             return classifierRenderer;
         }
-        EVRRenderer& getEVRRenderer() {
-            return *evrRenderer;
-        }
-
+        bool setD2D();
         void getCurrentFrame(std::vector<std::vector<unsigned char>>& frame);
         void cleanup();
 
