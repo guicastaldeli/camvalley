@@ -6,6 +6,10 @@
 #pragma comment(lib, "shlwapi.lib")
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "evr.lib")
+#include "device_controller.h"
+#include "../renderer/classifier_renderer.h"
+#include "../renderer/d2d_renderer.h"
+#include "../window_manager.h"
 #include <Windows.h>
 #include <mfapi.h>
 #include <mfidl.h>
@@ -17,11 +21,9 @@
 #include <queue>
 #include <mutex>
 #include <atomic>
-#include <condition_variable> 
-#include "device_controller.h"
-#include "../renderer/classifier_renderer.h"
-#include "../renderer/d2d_renderer.h"
-#include "../window_manager.h"
+#include <condition_variable>
+#include "../source/source_reader.h"
+#include "../source/frame_converter.h"
 
 class D2DRenderer;
 class CaptureController : public IMFSourceReaderCallback {
@@ -29,10 +31,11 @@ class CaptureController : public IMFSourceReaderCallback {
         std::wstring currentDeviceId;
         WindowManager& windowManager;
         DeviceController deviceController;
+        SourceReader* sourceReader;
+        FrameConverter* frameConverter;
 
         ULONG m_cRef;
         IMFMediaSource* pVideoSource;
-        IMFSourceReader* pReader;
         IMFActivate** ppDevices;
         IMFMediaSession* pSession;
         IMFVideoDisplayControl* pVideoDisplay;
@@ -56,19 +59,16 @@ class CaptureController : public IMFSourceReaderCallback {
         std::vector<Rect> currentDetectedFaces;
         std::mutex facesMutex;
 
-        bool setupDevice(const std::wstring& deviceId);
-        bool createSourceReader(IMFMediaSource* pCaptureSource);
-        HRESULT configFormat(IMFMediaTypeHandler* pHandler);
-
         CaptureController(WindowManager& wm);
         ~CaptureController();
-
+        
         bool init(
             int x,
             int y,
             int w,
             int h
         );
+        bool setupDevice(const std::wstring& deviceId);
         bool initWithDevice(
             HWND parent,
             const std::wstring& deviceId,
@@ -82,11 +82,6 @@ class CaptureController : public IMFSourceReaderCallback {
 
         void enableFaceDetection(bool enable);
         void loadCascade(const std::string& file);
-        std::vector<std::vector<unsigned char>> convertFrameToGrayscale(
-            BYTE* pData, 
-            DWORD length
-        );
-        void processFrame();
         
         bool isCapturing() const {
             return isRunning;

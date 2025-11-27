@@ -5,7 +5,7 @@ echo ================================
 
 call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
 
-cl /EHsc /std:c++17 /DUNICODE /D_UNICODE /I".." ..\*.cpp ..\controller\*.cpp ..\device\*.cpp ..\classifier\*.cpp ..\renderer\*.cpp ^
+cl /EHsc /std:c++17 /DUNICODE /D_UNICODE /I".." ..\*.cpp ..\controller\*.cpp ..\device\*.cpp ..\classifier\*.cpp ..\renderer\*.cpp ..\source\*.cpp^
    /link mf.lib mfplat.lib mfreadwrite.lib mfuuid.lib ole32.lib shlwapi.lib user32.lib gdi32.lib d3d9.lib /out:main.exe
 
 if %errorlevel% equ 0 (

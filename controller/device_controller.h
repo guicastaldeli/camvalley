@@ -26,5 +26,6 @@ class DeviceController {
         std::vector<IDevice*> getDevicesByType(const std::wstring& type) const;
 
         void addDevice(std::unique_ptr<IDevice> device);
+        bool resetCamera(const std::wstring& deviceId);
         void cleanup();
 };
